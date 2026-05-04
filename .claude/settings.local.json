@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git branch *)",
+      "Bash(git tag *)",
+      "Read(//e/__VR/FUCKRIPPER/net.rs64.tex-trans-tool/**)"
+    ]
+  }
+}

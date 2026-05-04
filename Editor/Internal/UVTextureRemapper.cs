@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using nadena.dev.ndmf;
 using UnityEditor;
@@ -10,28 +11,25 @@ using Object = UnityEngine.Object;
 namespace FuckRipper.AvatarObfuscator.Internal
 {
     /// <summary>
-    /// Per-texture bit-jitter material obfuscator.
+    /// Per-material texture atlas rearrangement obfuscator.
     ///
-    /// <para>For every <see cref="Texture2D"/> referenced by every material on the
-    /// avatar, build a byte-different copy by reading the source pixels through a
-    /// GPU blit, perturbing one sub-pixel low-significance bit, then recompressing
-    /// to a format that matches the source (BC7 / DXT5 / ASTC / ETC2 / etc.) so
-    /// runtime VRAM and bundle size stay the same as the original. The jittered
-    /// texture renders identically — the perturbation is well below human
-    /// discrimination threshold — but every byte-level content hash (SHA-256 used
-    /// by ripper reverse-image-search workflows, perceptual-hash variants, etc.)
-    /// changes.</para>
+    /// <para>Follows the same principle as TTT's atlas builder: repack texture
+    /// content into a different spatial layout so every byte of the output
+    /// differs from the source — no ripper reverse-image-search (SHA-256, pHash)
+    /// can match the original. Because mesh UVs are remapped in lockstep, the
+    /// visual result is unchanged.</para>
     ///
-    /// <para>Because the source's compressed format is preserved, there is no VRAM
-    /// blow-up. Because mesh UVs are never modified and material per-texture
-    /// scale/offset (<c>_TextureName_ST</c>) values are kept identical to the
-    /// source, the visual result is unchanged regardless of how many UV channels
-    /// are bound, what tiling/offset is in use, and whether normal maps / detail
-    /// masks / matcaps / parallax effects are present.</para>
+    /// <para>The rearranging uses a uniform N×N tile-grid shuffle across all
+    /// textures on the avatar. A single deterministic permutation (seeded from
+    /// the avatar root instance ID) is applied to every texture, and every mesh
+    /// UV channel is remapped through the same grid transform. This keeps the
+    /// code minimal (no per-island packing optimizer) while still producing a
+    /// complete byte-level rewrite of every obfuscated texture.</para>
     ///
     /// <para>Material reference rewrites are recorded in
-    /// <see cref="ObfuscationContext.MaterialReplacements"/> so that the
-    /// animation-clip pass redirects ObjectReference curves accordingly.</para>
+    /// <see cref="ObfuscationContext.MaterialReplacements"/> and mesh replacements
+    /// in <see cref="ObfuscationContext.MeshReplacements"/> so the animation-clip
+    /// pass redirects ObjectReference curves accordingly.</para>
     /// </summary>
     internal static class UVTextureRemapper
     {
@@ -40,94 +38,180 @@ namespace FuckRipper.AvatarObfuscator.Internal
             var renderers = context.AvatarRootObject.GetComponentsInChildren<Renderer>(true);
 
             // ---------------------------------------------------------------
-            // 1. Collect every material in use.
+            // 1. Collect every material and every Texture2D in use.
             // ---------------------------------------------------------------
             var allMaterials = new HashSet<Material>();
+            var allTextures = new HashSet<Texture2D>();
             foreach (var r in renderers)
             {
                 if (r == null) continue;
                 foreach (var m in r.sharedMaterials)
-                    if (m != null) allMaterials.Add(m);
+                {
+                    if (m == null || m.shader == null) continue;
+                    allMaterials.Add(m);
+                    EnumerateMaterialTextures(m, allTextures);
+                }
             }
             if (allMaterials.Count == 0) return;
 
             // ---------------------------------------------------------------
-            // 2. Build per-source-texture jitter cache (GLOBAL across the pass)
-            //    and per-source-material remap. A texture shared across N
-            //    materials produces exactly 1 obfuscated copy in VRAM, not N.
+            // 2. Determine uniform grid and permutation.
+            //    Grid size is derived from the largest texture so tiles are
+            //    never microscopic; min 2×2, max 6×6, each tile ≥ 64 px.
             // ---------------------------------------------------------------
-            var jitterCache = new Dictionary<Texture2D, Texture2D>();
-            var remappedMaterial = new Dictionary<Material, Material>(allMaterials.Count);
+            int maxTexSize = 64;
+            foreach (var t in allTextures)
+            {
+                if (t == null) continue;
+                maxTexSize = Mathf.Max(maxTexSize, Mathf.Max(t.width, t.height));
+            }
+            int gridSize = Mathf.Clamp(maxTexSize / 64, 2, 6);
+            int cellCount = gridSize * gridSize;
 
+            // Deterministic permutation seeded from avatar root + texture count
+            // so the same avatar always produces the same shuffle across builds.
+            int seed = (context.AvatarRootObject != null
+                ? context.AvatarRootObject.GetInstanceID()
+                : 42) ^ (allTextures.Count << 8);
+            var perm = BuildPermutation(cellCount, seed);
+
+            // ---------------------------------------------------------------
+            // 3. Build shuffled texture cache (global — a texture shared
+            //    across N materials is only shuffled once, like TTT's cache).
+            // ---------------------------------------------------------------
+            var shuffledCache = new Dictionary<Texture2D, Texture2D>();
+            foreach (var tex in allTextures)
+            {
+                if (tex == null || shuffledCache.ContainsKey(tex)) continue;
+                if (IsHdrFormat(tex.format)) continue; // HDR: skip, can't safely reprocess
+
+                var shuffled = BuildShuffledTexture(context, state, tex, gridSize, perm);
+                if (shuffled == null) continue;
+
+                shuffled.name = state.NameGen != null ? state.NameGen.Next() : tex.name;
+                context.AssetSaver.SaveAsset(shuffled);
+                ObjectRegistry.RegisterReplacedObject(tex, shuffled);
+                shuffledCache[tex] = shuffled;
+            }
+            if (shuffledCache.Count == 0) return;
+
+            // ---------------------------------------------------------------
+            // 4. Clone every material, swap textures to shuffled versions.
+            //    Material UV scale/offset is NOT changed — the shuffled
+            //    texture occupies the same [0,1]×[0,1] space.
+            // ---------------------------------------------------------------
+            var matRemap = new Dictionary<Material, Material>();
             foreach (var orig in allMaterials)
             {
-                var newMat = BuildRemappedMaterial(context, state, orig, jitterCache);
-                if (newMat == null) continue;
-                remappedMaterial[orig] = newMat;
+                var newMat = BuildRemappedMaterial(context, orig, shuffledCache);
+                if (newMat == null || newMat == orig) continue;
+                matRemap[orig] = newMat;
                 state.MaterialReplacements[orig] = newMat;
                 ObjectRegistry.RegisterReplacedObject(orig, newMat);
             }
-            if (remappedMaterial.Count == 0) return;
 
             // ---------------------------------------------------------------
-            // 3. Swap each renderer's material slots to the obfuscated versions.
-            //    Mesh UVs are NOT modified.
+            // 5. Clone every mesh that uses a remapped material, remap ALL
+            //    UV channels through the grid transform, and swap the
+            //    renderer's mesh + material slots.
             // ---------------------------------------------------------------
+            var meshCloneCache = new Dictionary<Mesh, Mesh>(); // mesh → cloned+remapped
+            var rendererMeshRemap = new Dictionary<Renderer, Mesh>(); // for anim curves
+
             foreach (var r in renderers)
             {
                 if (r == null) continue;
                 var mats = r.sharedMaterials;
-                bool anySwap = false;
+                bool needsRemap = false;
+                for (int s = 0; s < mats.Length; s++)
+                    if (mats[s] != null && matRemap.ContainsKey(mats[s]))
+                        needsRemap = true;
+                if (!needsRemap) continue;
+
+                // Swap material slots.
                 for (int s = 0; s < mats.Length; s++)
                 {
-                    if (mats[s] != null
-                        && remappedMaterial.TryGetValue(mats[s], out var rep)
-                        && rep != mats[s])
-                    {
+                    if (mats[s] != null && matRemap.TryGetValue(mats[s], out var rep))
                         mats[s] = rep;
-                        anySwap = true;
-                    }
                 }
-                if (anySwap) r.sharedMaterials = mats;
+                r.sharedMaterials = mats;
+
+                // Clone + UV-remap the mesh.
+                Mesh srcMesh = GetSharedMesh(r);
+                if (srcMesh == null) continue;
+
+                if (!meshCloneCache.TryGetValue(srcMesh, out var clonedMesh))
+                {
+                    clonedMesh = Object.Instantiate(srcMesh);
+                    clonedMesh.name = srcMesh.name; // keep original name; FinalizeAssetsPass renames later
+                    RemapAllUvChannels(clonedMesh, gridSize, perm);
+                    clonedMesh.UploadMeshData(false);
+                    context.AssetSaver.SaveAsset(clonedMesh);
+                    ObjectRegistry.RegisterReplacedObject(srcMesh, clonedMesh);
+                    meshCloneCache[srcMesh] = clonedMesh;
+                }
+
+                SetSharedMesh(r, clonedMesh);
+                rendererMeshRemap[r] = clonedMesh;
             }
+
+            // Record mesh replacements for downstream passes.
+            foreach (var kv in meshCloneCache)
+                state.MeshReplacements[kv.Key] = kv.Value;
+        }
+
+        // ====================================================================
+        // Grid & permutation
+        // ====================================================================
+
+        /// <summary>
+        /// Build a Fisher-Yates shuffle of [0..count-1] seeded from the given int.
+        /// </summary>
+        private static int[] BuildPermutation(int count, int seed)
+        {
+            var p = new int[count];
+            for (int i = 0; i < count; i++) p[i] = i;
+
+            // Deterministic PRNG — no System.Random needed.
+            uint state = (uint)seed;
+            for (int i = count - 1; i > 0; i--)
+            {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                int j = (int)(state % (uint)(i + 1));
+                (p[i], p[j]) = (p[j], p[i]);
+            }
+            return p;
         }
 
         // ====================================================================
         // Material build
         // ====================================================================
 
+        private static void EnumerateMaterialTextures(Material mat, HashSet<Texture2D> sink)
+        {
+            if (mat == null || mat.shader == null) return;
+            int propCount = mat.shader.GetPropertyCount();
+            for (int p = 0; p < propCount; p++)
+            {
+                if (mat.shader.GetPropertyType(p) != ShaderPropertyType.Texture) continue;
+                var t = mat.GetTexture(mat.shader.GetPropertyName(p));
+                if (t is Texture2D t2d && !IsHdrFormat(t2d.format))
+                    sink.Add(t2d);
+            }
+        }
+
         private static Material BuildRemappedMaterial(BuildContext context,
-            ObfuscationContext state, Material src, Dictionary<Texture2D, Texture2D> jitterCache)
+            Material src, Dictionary<Texture2D, Texture2D> shuffledCache)
         {
             if (src == null || src.shader == null) return null;
 
-            // Material clone strategy mirrors Avatar Optimizer's DupliacteAssets
-            // pass:
-            //
-            //   1. Use the `new Material(src)` copy constructor — this is the
-            //      canonical Material-cloning path documented by Unity. It
-            //      preserves every serialized field: shader, render queue,
-            //      every float/color/vector/int property, every texture binding
-            //      with its scale/offset, every shader keyword toggle, GI flags,
-            //      enableInstancing, doubleSidedGI, etc.
-            //
-            //   2. Wrap the construction in `BeginNoApplyMaterialPropertyDrawers`
-            //      so that material property drawer side effects (e.g. lilToon /
-            //      Poiyomi auto-recomputing render queue or related properties
-            //      when a property changes) do NOT fire during the clone. AAO
-            //      learned this the hard way; we follow their lead.
-            //
-            //   3. Set `parent = null` afterwards to flatten Material Variants
-            //      (Unity 2022.1+). Without this, the clone retains a parent
-            //      reference and any subsequent SetTexture write would not
-            //      override an inherited value.
             Material copy;
             using (MaterialEditorReflection.BeginNoApplyMaterialPropertyDrawers())
-            {
                 copy = new Material(src);
-            }
 #if UNITY_2022_1_OR_NEWER
-            copy.parent = null; // force flatten material variants
+            copy.parent = null;
 #endif
             copy.name = src.name;
             context.AssetSaver.SaveAsset(copy);
@@ -137,226 +221,105 @@ namespace FuckRipper.AvatarObfuscator.Internal
             {
                 if (src.shader.GetPropertyType(p) != ShaderPropertyType.Texture) continue;
                 var propName = src.shader.GetPropertyName(p);
-
-                // Defensive: skip if the (cloned) material doesn't actually have
-                // this property — covers shader-property-not-found edge cases.
                 if (!copy.HasProperty(propName)) continue;
 
                 var t = src.GetTexture(propName);
-                if (t == null) continue;
-
-                // Cubemaps, 3D textures, render textures, 2D arrays — leave them
-                // untouched. They are not the typical content-hash matching surface
-                // for ripper workflows, and re-encoding them safely is non-trivial.
-                if (!(t is Texture2D t2d)) continue;
-
-                if (!jitterCache.TryGetValue(t2d, out var jittered))
-                {
-                    jittered = BuildJitteredTexture(t2d);
-                    if (jittered != null)
-                    {
-                        // Use a homoglyph name so the texture's metadata in the
-                        // exported bundle blends in with the rest of the
-                        // obfuscated identifiers.
-                        jittered.name = state.NameGen != null ? state.NameGen.Next() : t2d.name;
-                        context.AssetSaver.SaveAsset(jittered);
-                        ObjectRegistry.RegisterReplacedObject(t2d, jittered);
-                    }
-                    jitterCache[t2d] = jittered;
-                }
-
-                if (jittered == null) continue;
-
-                copy.SetTexture(propName, jittered);
-                // We deliberately DO NOT touch GetTextureScale / GetTextureOffset —
-                // the new texture has the same pixel layout as the source, so
-                // the original ST sampling is correct.
+                if (t is Texture2D t2d && shuffledCache.TryGetValue(t2d, out var shuffled))
+                    copy.SetTexture(propName, shuffled);
             }
 
             return copy;
         }
 
         // ====================================================================
-        // Texture jitter
+        // Texture shuffle (GPU pipeline — works for all readable+non-readable)
         // ====================================================================
 
         /// <summary>
-        /// Produce a Texture2D that is byte-different from the source while
-        /// remaining visually indistinguishable.
-        ///
-        /// <para><b>Primary path (lossless, AAO-style)</b>: allocate a new
-        /// Texture2D with EXACTLY the source's format / dimensions / mip count
-        /// / color space, GPU-copy the source into it via
-        /// <see cref="Graphics.CopyTexture(Texture, Texture)"/>, then flip a
-        /// single bit in the raw byte buffer of the smallest mip via
-        /// <see cref="Texture2D.GetRawTextureData{T}"/> +
-        /// <see cref="Texture2D.SetPixelData{T}(byte[], int)"/>. The output is
-        /// byte-for-byte identical to the source EXCEPT one bit, in the
-        /// source's original compressed format — zero VRAM blow-up, zero
-        /// quality loss from re-encoding.</para>
-        ///
-        /// <para><b>Fallback (lossy)</b>: if the primary path is not available
-        /// for the source format (Crunch, exotic), we recompress through an
-        /// LDR ARGB32 blit pipeline — same path as 0.2.0 but now with
-        /// CompressTexture back to the source's compressed format so VRAM
-        /// still matches.</para>
-        ///
-        /// <para><b>Final fallback</b>: if both paths fail, return null. The
-        /// caller leaves the original texture in use — no obfuscation but no
-        /// breakage. Better than shipping a 4× bloated RGBA32 (the original
-        /// 0.2.0/0.2.1 regression).</para>
+        /// Create a shuffled Texture2D by reading source pixels into an
+        /// intermediate RGBA32 buffer, rearranging tiles in CPU memory, then
+        /// recompressing to match the source format (BC7, DXT5, ASTC, etc.).
+        /// The output has the same dimensions, mip count, and color space as
+        /// the source.
         /// </summary>
-        private static Texture2D BuildJitteredTexture(Texture2D src)
+        private static Texture2D BuildShuffledTexture(BuildContext context,
+            ObfuscationContext state, Texture2D src, int gridSize, int[] perm)
         {
             if (src == null) return null;
             int w = src.width;
             int h = src.height;
             if (w <= 0 || h <= 0) return null;
 
-            // HDR: skip. A 1-bit XOR on raw HDR bytes can flip exponent bits
-            // and produce a visible artifact (e.g., a single pixel becoming
-            // very bright). Lossy LDR re-encode would also discard HDR range.
-            // Pass HDR textures through unmodified — no obfuscation but no
-            // breakage.
-            if (IsHdrFormat(src.format)) return null;
-
-            // Primary path: byte-level lossless copy + 1-bit XOR.
-            var lossless = TryBuildLosslessJittered(src);
-            if (lossless != null) return lossless;
-
-            // Fallback path: blit + ReadPixels + recompress.
-            return TryBuildLossyJittered(src);
-        }
-
-        // --------------------------------------------------------------------
-        // Primary path: lossless byte-level XOR
-        // --------------------------------------------------------------------
-
-        private static Texture2D TryBuildLosslessJittered(Texture2D src)
-        {
-            // Crunch-compressed textures return an empty array from
-            // GetRawTextureData (the byte buffer holds Crunch headers, not
-            // pixel data we can XOR meaningfully). Skip them in the primary
-            // path; the fallback handles them.
-            if (IsCrunchFormat(src.format)) return null;
-
-            Texture2D dst = null;
-            try
-            {
-                bool linear = ResolveLinearFromTexture(src);
-
-                // Same format / dimensions / mips / color space as src. The
-                // default `new Texture2D` is CPU-readable, which is required
-                // for GetRawTextureData below.
-                dst = new Texture2D(src.width, src.height, src.format,
-                    src.mipmapCount, linear)
-                {
-                    wrapMode    = src.wrapMode,
-                    filterMode  = src.filterMode,
-                    anisoLevel  = src.anisoLevel,
-                };
-
-                // GPU-side byte-perfect copy. Works without src.isReadable
-                // because CopyTexture operates on the GPU representation.
-                Graphics.CopyTexture(src, dst);
-                // Sync the CPU-side buffer (some Unity versions populate it
-                // lazily on the first GetRawTextureData call; explicit Apply
-                // is the safe documented path that AAO also uses).
-                dst.Apply(updateMipmaps: false);
-
-                var raw = dst.GetRawTextureData<byte>();
-                if (raw.Length == 0)
-                {
-                    // CopyTexture didn't expose the bytes (rare — usually only
-                    // for surface-format-only textures). Fall back.
-                    Object.DestroyImmediate(dst);
-                    return null;
-                }
-
-                // Pull out the bytes, flip one LSB, write back. We allocate a
-                // managed byte[] for SetPixelData<byte>(byte[]); the NativeArray
-                // returned by GetRawTextureData is a view, but SetPixelData on
-                // the same view doesn't trigger a re-upload reliably. The
-                // managed-array round-trip is what AAO uses too.
-                var bytes = new byte[raw.Length];
-                raw.CopyTo(bytes);
-
-                // Flip the LSB of the very last byte. For BC/DXT/ASTC block-
-                // compressed formats this lands in the smallest mip's last
-                // block — a 4×4 patch at the lowest mip level, sampled only at
-                // extreme distances. For uncompressed formats it's a single
-                // sub-channel LSB on the corner pixel of the smallest mip.
-                // Both are visually invisible; the byte-level (and SHA-256)
-                // change is total.
-                bytes[bytes.Length - 1] = (byte)(bytes[bytes.Length - 1] ^ 1);
-                dst.SetPixelData(bytes, 0);
-
-                // Final upload + drop CPU copy. From here the texture lives
-                // only on the GPU at the source's native size and format.
-                dst.Apply(updateMipmaps: false, makeNoLongerReadable: true);
-                return dst;
-            }
-            catch (System.Exception e)
-            {
-                if (dst != null) Object.DestroyImmediate(dst);
-                Debug.Log(
-                    $"[AvatarObfuscator] Lossless bit-jitter unavailable for " +
-                    $"'{src.name}' (format={src.format}): {e.Message}. " +
-                    $"Falling back to lossy path.");
-                return null;
-            }
-        }
-
-        // --------------------------------------------------------------------
-        // Fallback path: blit + ReadPixels + recompress (lossy)
-        // --------------------------------------------------------------------
-
-        private static Texture2D TryBuildLossyJittered(Texture2D src)
-        {
-            int w = src.width;
-            int h = src.height;
             bool linear = ResolveLinearFromTexture(src);
             var rwMode = linear ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.sRGB;
 
+            // Step 1: Read the whole source into a CPU-side Color[].
             var rt = RenderTexture.GetTemporary(w, h, 0, RenderTextureFormat.ARGB32, rwMode);
             var prevActive = RenderTexture.active;
+            Texture2D shuffled = null;
 
-            Texture2D tex = null;
             try
             {
+                // Blit source → temp RT respecting color space.
                 Graphics.Blit(src, rt);
                 RenderTexture.active = rt;
 
-                tex = new Texture2D(w, h, TextureFormat.RGBA32, mipChain: true, linear: linear)
+                // Read back as RGBA32 CPU pixels.
+                var srcTex = new Texture2D(w, h, TextureFormat.RGBA32, false, linear);
+                srcTex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                srcTex.Apply(false);
+
+                // Step 2: Rearrange tiles.
+                var srcPixels = srcTex.GetPixels();
+                var dstPixels = new Color[w * h];
+                int tw = w / gridSize;
+                int th = h / gridSize;
+
+                for (int ti = 0; ti < perm.Length; ti++)
                 {
-                    wrapMode = src.wrapMode,
+                    int srcIdx = ti;        // source tile linear index
+                    int dstIdx = perm[ti];  // destination tile linear index
+
+                    int srcCol = srcIdx % gridSize;
+                    int srcRow = srcIdx / gridSize;
+                    int dstCol = dstIdx % gridSize;
+                    int dstRow = dstIdx / gridSize;
+
+                    int srcX = srcCol * tw;
+                    int srcY = srcRow * th;
+                    int dstX = dstCol * tw;
+                    int dstY = dstRow * th;
+
+                    for (int y = 0; y < th; y++)
+                    {
+                        int srcRowStart = (srcY + y) * w + srcX;
+                        int dstRowStart = (dstY + y) * w + dstX;
+                        Array.Copy(srcPixels, srcRowStart, dstPixels, dstRowStart, tw);
+                    }
+                }
+
+                Object.DestroyImmediate(srcTex);
+
+                // Step 3: Write rearranged pixels to a new RGBA32 texture.
+                shuffled = new Texture2D(w, h, TextureFormat.RGBA32, src.mipmapCount > 1, linear)
+                {
+                    wrapMode   = src.wrapMode,
                     filterMode = src.filterMode,
                     anisoLevel = src.anisoLevel,
                 };
-                tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                shuffled.SetPixels(dstPixels);
+                shuffled.Apply(updateMipmaps: src.mipmapCount > 1);
 
-                var c0 = tex.GetPixel(0, 0);
-                int r8 = Mathf.Clamp(Mathf.RoundToInt(c0.r * 255f), 0, 255) ^ 1;
-                c0.r = r8 / 255f;
-                tex.SetPixel(0, 0, c0);
+                // Step 4: Recompress to source-matching format.
+                TryRecompress(shuffled, src.format, src.name);
 
-                tex.Apply(updateMipmaps: true);
-
-                if (!TryRecompress(tex, src.format, src.name))
-                {
-                    Object.DestroyImmediate(tex);
-                    return null;
-                }
-
-                tex.Apply(updateMipmaps: false, makeNoLongerReadable: true);
-                return tex;
+                // Drop CPU copy.
+                shuffled.Apply(false, makeNoLongerReadable: true);
             }
-            catch (System.Exception e)
+            catch (Exception e)
             {
-                Debug.LogWarning(
-                    $"[AvatarObfuscator] Lossy bit-jitter fallback failed for " +
-                    $"'{src.name}' (format={src.format}, {w}x{h}): {e.Message}");
-                if (tex != null) Object.DestroyImmediate(tex);
+                if (shuffled != null) Object.DestroyImmediate(shuffled);
+                Debug.LogWarning($"[AvatarObfuscator] Grid shuffle failed for '{src.name}': {e.Message}");
                 return null;
             }
             finally
@@ -364,139 +327,83 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 RenderTexture.active = prevActive;
                 RenderTexture.ReleaseTemporary(rt);
             }
+
+            return shuffled;
         }
 
-        /// <summary>
-        /// Crunch is a meta-compression on top of DXT — the raw byte buffer
-        /// of a Crunch texture holds Crunch headers, not pixel data we can
-        /// XOR meaningfully. Detected separately so the lossless path can
-        /// skip it.
-        /// </summary>
-        private static bool IsCrunchFormat(TextureFormat fmt)
-        {
-            switch (fmt)
-            {
-                case TextureFormat.DXT1Crunched:
-                case TextureFormat.DXT5Crunched:
-                case TextureFormat.ETC_RGB4Crunched:
-                case TextureFormat.ETC2_RGBA8Crunched:
-                    return true;
-                default:
-                    return false;
-            }
-        }
+        // ====================================================================
+        // Mesh UV remapping
+        // ====================================================================
 
         /// <summary>
-        /// Recompress an RGBA32 readable Texture2D to a sensible compressed format.
-        /// Returns true on success. On failure, leaves the texture in whatever
-        /// state the partial compression left it (the caller decides what to do).
+        /// Remap every UV channel (0–3) on <paramref name="mesh"/> through
+        /// the grid permutation transform. UV2 and UV3 are stored as Vector4
+        /// by Unity's GetUVs/SetUVs; we only touch the xy components.
         /// </summary>
-        private static bool TryRecompress(Texture2D tex, TextureFormat sourceFormat, string srcName)
+        private static void RemapAllUvChannels(Mesh mesh, int gridSize, int[] perm)
         {
-            var preferred = ChooseTargetFormat(sourceFormat);
-            if (preferred == tex.format) return true; // already in target format
+            float invGrid = 1f / gridSize;
 
-            // Try preferred (source-matching) format.
-            try
+            // Precompute destination col/row for each source tile.
+            var dstCol = new int[perm.Length];
+            var dstRow = new int[perm.Length];
+            for (int i = 0; i < perm.Length; i++)
             {
-                EditorUtility.CompressTexture(tex, preferred, TextureCompressionQuality.Normal);
-                return true;
+                dstCol[i] = perm[i] % gridSize;
+                dstRow[i] = perm[i] / gridSize;
             }
-            catch (System.Exception e1)
+
+            for (int ch = 0; ch < 4; ch++)
             {
-                // Preferred failed. Try BC7 (most universal modern desktop format).
-                if (preferred != TextureFormat.BC7)
+                var uvs = new List<Vector4>();
+                mesh.GetUVs(ch, uvs);
+                if (uvs.Count == 0) continue;
+
+                for (int i = 0; i < uvs.Count; i++)
                 {
-                    try
-                    {
-                        EditorUtility.CompressTexture(tex, TextureFormat.BC7, TextureCompressionQuality.Normal);
-                        return true;
-                    }
-                    catch (System.Exception e2)
-                    {
-                        // BC7 also failed. Try built-in Compress (DXT1/DXT5).
-                        try
-                        {
-                            tex.Compress(highQuality: true);
-                            return true;
-                        }
-                        catch (System.Exception e3)
-                        {
-                            Debug.LogWarning(
-                                $"[AvatarObfuscator] All recompression paths failed for '{srcName}' " +
-                                $"(source={sourceFormat}): preferred={preferred}/{e1.Message}, " +
-                                $"BC7/{e2.Message}, Compress/{e3.Message}.");
-                            return false;
-                        }
-                    }
+                    var uv = uvs[i];
+                    float u = uv.x;
+                    float v = uv.y;
+
+                    // Clamp to [0,1] so out-of-range UVs don't index out of bounds.
+                    int sc = Mathf.Clamp((int)(u * gridSize), 0, gridSize - 1);
+                    int sr = Mathf.Clamp((int)(v * gridSize), 0, gridSize - 1);
+                    int srcTile = sr * gridSize + sc;
+
+                    float localU = (u * gridSize) - sc;
+                    float localV = (v * gridSize) - sr;
+
+                    uvs[i] = new Vector4(
+                        (dstCol[srcTile] + localU) * invGrid,
+                        (dstRow[srcTile] + localV) * invGrid,
+                        uv.z, uv.w);
                 }
-                else
-                {
-                    // Preferred was already BC7. Try built-in Compress as final fallback.
-                    try
-                    {
-                        tex.Compress(highQuality: true);
-                        return true;
-                    }
-                    catch (System.Exception e2)
-                    {
-                        Debug.LogWarning(
-                            $"[AvatarObfuscator] Recompression failed for '{srcName}' " +
-                            $"(source={sourceFormat}): BC7/{e1.Message}, Compress/{e2.Message}.");
-                        return false;
-                    }
-                }
+
+                mesh.SetUVs(ch, uvs);
             }
         }
 
-        /// <summary>
-        /// Pick a sensible compressed target format given the source's format.
-        /// For already-compressed sources we preserve the format exactly so that
-        /// VRAM matches; for uncompressed sources we default to BC7 (the
-        /// universal modern desktop colour format).
-        /// </summary>
-        private static TextureFormat ChooseTargetFormat(TextureFormat sourceFormat)
+        // ====================================================================
+        // Mesh get/set helpers (handle SkinnedMeshRenderer + MeshRenderer)
+        // ====================================================================
+
+        private static Mesh GetSharedMesh(Renderer r)
         {
-            switch (sourceFormat)
-            {
-                // BC family — preserve exactly (PC builds).
-                case TextureFormat.DXT1:
-                case TextureFormat.DXT1Crunched:
-                case TextureFormat.DXT5:
-                case TextureFormat.DXT5Crunched:
-                case TextureFormat.BC4:
-                case TextureFormat.BC5:
-                case TextureFormat.BC7:
-                    return sourceFormat;
-
-                // ASTC family — Quest / Android.
-                case TextureFormat.ASTC_4x4:
-                case TextureFormat.ASTC_5x5:
-                case TextureFormat.ASTC_6x6:
-                case TextureFormat.ASTC_8x8:
-                case TextureFormat.ASTC_10x10:
-                case TextureFormat.ASTC_12x12:
-                    return sourceFormat;
-
-                // ETC family — fallback Android, also some legacy targets.
-                case TextureFormat.ETC_RGB4:
-                case TextureFormat.ETC2_RGB:
-                case TextureFormat.ETC2_RGBA1:
-                case TextureFormat.ETC2_RGBA8:
-                case TextureFormat.ETC2_RGBA8Crunched:
-                    return sourceFormat;
-
-                // Uncompressed colour → BC7 (high quality, universal modern desktop).
-                default:
-                    return TextureFormat.BC7;
-            }
+            if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
+            var mf = r.GetComponent<MeshFilter>();
+            return mf != null ? mf.sharedMesh : null;
         }
 
-        /// <summary>
-        /// Detect HDR / floating-point texture formats. The blit-and-jitter
-        /// pipeline is LDR (ARGB32) and would clip / lose precision on these.
-        /// We skip them rather than corrupt them.
-        /// </summary>
+        private static void SetSharedMesh(Renderer r, Mesh mesh)
+        {
+            if (r is SkinnedMeshRenderer smr) smr.sharedMesh = mesh;
+            else { var mf = r.GetComponent<MeshFilter>(); if (mf != null) mf.sharedMesh = mesh; }
+        }
+
+        // ====================================================================
+        // Texture format helpers (retained from previous version)
+        // ====================================================================
+
         private static bool IsHdrFormat(TextureFormat fmt)
         {
             switch (fmt)
@@ -521,61 +428,89 @@ namespace FuckRipper.AvatarObfuscator.Internal
             }
         }
 
-        /// <summary>
-        /// Determine whether the source texture's data is in linear color space.
-        ///
-        /// <para>Prefers the texture's own <see cref="Texture2D.isDataSRGB"/>
-        /// flag (Unity 2022.1+) — it works for runtime / sub-asset / imported
-        /// textures uniformly. Falls back to the importer's <c>sRGBTexture</c>
-        /// flag when the texture has an asset path; finally defaults to sRGB
-        /// (the conservative choice for albedo / emission).</para>
-        /// </summary>
+        private static void TryRecompress(Texture2D tex, TextureFormat sourceFormat, string srcName)
+        {
+            var preferred = ChooseTargetFormat(sourceFormat);
+            if (preferred == tex.format) return;
+
+            try { EditorUtility.CompressTexture(tex, preferred, TextureCompressionQuality.Normal); return; }
+            catch (Exception e1)
+            {
+                if (preferred != TextureFormat.BC7)
+                {
+                    try { EditorUtility.CompressTexture(tex, TextureFormat.BC7, TextureCompressionQuality.Normal); return; }
+                    catch (Exception e2)
+                    {
+                        try { tex.Compress(true); return; }
+                        catch (Exception e3)
+                        {
+                            Debug.LogWarning(
+                                $"[AvatarObfuscator] Recompression failed for '{srcName}': " +
+                                $"{preferred}/{e1.Message}, BC7/{e2.Message}, Compress/{e3.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    try { tex.Compress(true); return; }
+                    catch (Exception e2)
+                    {
+                        Debug.LogWarning(
+                            $"[AvatarObfuscator] Recompression failed for '{srcName}': " +
+                            $"BC7/{e1.Message}, Compress/{e2.Message}");
+                    }
+                }
+            }
+        }
+
+        private static TextureFormat ChooseTargetFormat(TextureFormat sourceFormat)
+        {
+            switch (sourceFormat)
+            {
+                case TextureFormat.DXT1:
+                case TextureFormat.DXT1Crunched:
+                case TextureFormat.DXT5:
+                case TextureFormat.DXT5Crunched:
+                case TextureFormat.BC4:
+                case TextureFormat.BC5:
+                case TextureFormat.BC7:
+                    return sourceFormat;
+                case TextureFormat.ASTC_4x4:
+                case TextureFormat.ASTC_5x5:
+                case TextureFormat.ASTC_6x6:
+                case TextureFormat.ASTC_8x8:
+                case TextureFormat.ASTC_10x10:
+                case TextureFormat.ASTC_12x12:
+                    return sourceFormat;
+                case TextureFormat.ETC_RGB4:
+                case TextureFormat.ETC2_RGB:
+                case TextureFormat.ETC2_RGBA1:
+                case TextureFormat.ETC2_RGBA8:
+                case TextureFormat.ETC2_RGBA8Crunched:
+                    return sourceFormat;
+                default:
+                    return TextureFormat.BC7;
+            }
+        }
+
         private static bool ResolveLinearFromTexture(Texture2D src)
         {
             if (src == null) return false;
-
-            // Texture2D.isDataSRGB: true if the data is sRGB-encoded. We want
-            // the inverse: true if data is linear.
 #if UNITY_2022_1_OR_NEWER
-            // isDataSRGB is reliable for both imported and runtime textures.
             return !src.isDataSRGB;
 #else
-            return ResolveLinear(src);
-#endif
-        }
-
-        /// <summary>
-        /// Determine whether the source texture is in linear color space. Reads the
-        /// importer's sRGB flag when available; runtime / sub-asset textures with no
-        /// importer fall back to sRGB (the conservative default for albedo /
-        /// emission). Users with linear-space mask textures should mark them as
-        /// such on the importer.
-        /// </summary>
-        private static bool ResolveLinear(Texture2D src)
-        {
             var path = AssetDatabase.GetAssetPath(src);
             if (string.IsNullOrEmpty(path)) return false;
             var imp = AssetImporter.GetAtPath(path) as TextureImporter;
             return imp != null && !imp.sRGBTexture;
+#endif
         }
     }
 
     /// <summary>
-    /// Reflection helper for the editor-internal flag
-    /// <c>EditorMaterialUtility.disableApplyMaterialPropertyDrawers</c>.
-    ///
-    /// <para>When a Material is constructed via <c>new Material(other)</c>, Unity's
-    /// editor pipeline runs every shader's <c>MaterialPropertyDrawer.OnGUI</c>
-    /// hook to allow the drawer to fix up dependent properties. For shaders with
-    /// elaborate custom drawers (lilToon, Poiyomi, …), this side effect can
-    /// silently change render queue / shader keywords / dependent properties
-    /// during the clone — which we do NOT want during a build pipeline that
-    /// promises to be transparent to the user's source assets.</para>
-    ///
-    /// <para>Setting <c>disableApplyMaterialPropertyDrawers</c> to true for the
-    /// duration of the clone suppresses every drawer, so the cloned material is
-    /// a faithful copy of the source. This is the same trick used by
-    /// <c>com.anatawa12.avatar-optimizer</c>'s <c>DupliacteAssets</c> pass.</para>
+    /// Reflection helper for <c>EditorMaterialUtility.disableApplyMaterialPropertyDrawers</c>.
+    /// Mirrors AAO's DupliacteAssets pass — prevents lilToon / Poiyomi custom-drawer
+    /// side effects from firing during <c>new Material(src)</c>.
     /// </summary>
     internal static class MaterialEditorReflection
     {
@@ -583,9 +518,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
 
         static MaterialEditorReflection()
         {
-            // The flag lives on UnityEditor.EditorMaterialUtility as a non-public
-            // static property. It has been there since Unity 2018; we treat it
-            // as a hard dependency.
             s_Property = typeof(EditorMaterialUtility).GetProperty(
                 "disableApplyMaterialPropertyDrawers",
                 BindingFlags.Static | BindingFlags.NonPublic);

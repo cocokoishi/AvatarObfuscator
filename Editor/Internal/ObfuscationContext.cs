@@ -57,6 +57,13 @@ namespace FuckRipper.AvatarObfuscator.Internal
         public readonly Dictionary<Material, Material> MaterialReplacements = new Dictionary<Material, Material>();
 
         // ------------------------------------------------------------------
+        // Mesh replacements (RemapUVTexturePass writes here so downstream
+        // passes know the canonical mesh for each source mesh)
+        // ------------------------------------------------------------------
+        /// <summary>Original mesh -> UV-remapped clone.</summary>
+        public readonly Dictionary<Mesh, Mesh> MeshReplacements = new Dictionary<Mesh, Mesh>();
+
+        // ------------------------------------------------------------------
         // Helpers
         // ------------------------------------------------------------------
         public string MapParameter(string original)
@@ -70,6 +77,12 @@ namespace FuckRipper.AvatarObfuscator.Internal
         {
             if (original == null) return null;
             return MaterialReplacements.TryGetValue(original, out var replacement) ? replacement : original;
+        }
+
+        public Mesh MapMesh(Mesh original)
+        {
+            if (original == null) return null;
+            return MeshReplacements.TryGetValue(original, out var replacement) ? replacement : original;
         }
 
         public string MapPath(string original)

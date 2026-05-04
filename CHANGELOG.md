@@ -2,6 +2,35 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.3] - 2026-05-04
+
+### Changed
+- **Texture obfuscation strategy switched from per-texture bit-jitter to a
+  uniform tile-grid atlas rearrangement** (TTT-style repacking without merging).
+  Every texture on the avatar is split into an N×N tile grid, tiles are
+  deterministically permuted, and mesh UV channels (0–3) are remapped in
+  lockstep. The visual result is pixel-identical while every byte of every
+  texture differs from the source — no need for the previous XOR-on-raw-bytes
+  approach, zero VRAM format mismatch risk, and no dependency on
+  `GetRawTextureData` readback semantics.
+  - Grid size is auto-derived from the largest texture (2×2 to 6×6, each
+    tile ≥ 64 px). Permutation seed is deterministic (avatar instance ID),
+    so the same avatar always gets the same obfuscated output across builds.
+  - Texture shuffle goes through the `Graphics.Blit` → `ReadPixels` → CPU
+    rearrange → `SetPixels` → `EditorUtility.CompressTexture` pipeline,
+    which works for every readable and non-readable texture alike.
+  - Mesh UV channels 0–3 are remapped uniformly through the same grid
+    transform so rendering is correct regardless of which UV channel a
+    shader samples from.
+  - Shared-texture cache is global: a Texture2D referenced by N materials
+    produces exactly 1 shuffled copy.
+
+### Added
+- `ObfuscationContext.MeshReplacements` + `MapMesh()` — downstream
+  `ObfuscateAnimationClipsPass` now redirects `Mesh` object-reference curves
+  through the remapped clones, so animations stay consistent with the
+  UV-remapped meshes.
+
 ## [0.2.2] - 2026-05-04
 
 ### Fixed

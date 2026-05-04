@@ -18,7 +18,7 @@ namespace FuckRipper.AvatarObfuscator.Passes
     /// <list type="bullet">
     /// <item><c>path</c> → mapped through <see cref="ObfuscationContext.PathRenames"/></item>
     /// <item><c>blendShape.&lt;name&gt;</c> properties → mapped through <see cref="ObfuscationContext.BlendShapeRenamesByPath"/></item>
-    /// <item>Object reference curves → mapped through <see cref="ObfuscationContext.MaterialReplacements"/></item>
+    /// <item>Object reference curves → mapped through <see cref="ObfuscationContext.MaterialReplacements"/> and <see cref="ObfuscationContext.MeshReplacements"/></item>
     /// </list>
     /// Every clip on disk is cloned into the asset container before mutation so the
     /// user's original assets remain untouched.
@@ -182,6 +182,8 @@ namespace FuckRipper.AvatarObfuscator.Passes
                     {
                         if (keyframes[i].value is Material m)
                             keyframes[i].value = state.MapMaterial(m);
+                        else if (keyframes[i].value is Mesh mesh)
+                            keyframes[i].value = state.MapMesh(mesh);
                     }
                 }
                 AnimationUtility.SetObjectReferenceCurve(newClip, newBinding, keyframes);
