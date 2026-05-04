@@ -51,7 +51,7 @@ namespace FuckRipper.AvatarObfuscator.Internal
             new Dictionary<(Mesh, string), string>();
 
         // ------------------------------------------------------------------
-        // Material merging
+        // Material replacements (RemapUVTexturePass and AutoMergeSkinnedMeshPass write here)
         // ------------------------------------------------------------------
         /// <summary>Material currently used by the avatar -> the canonical material that survives.</summary>
         public readonly Dictionary<Material, Material> MaterialReplacements = new Dictionary<Material, Material>();

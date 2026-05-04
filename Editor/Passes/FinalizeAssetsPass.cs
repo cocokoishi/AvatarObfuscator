@@ -1,5 +1,8 @@
+using System;
+using System.Collections.Generic;
 using FuckRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
+using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
 #if FR_OBF_VRCSDK3_AVATARS
@@ -11,11 +14,15 @@ namespace FuckRipper.AvatarObfuscator.Passes
     /// <summary>
     /// Final pass: renames the asset names on temporary assets that were cloned by
     /// earlier passes. Asset *files* are not renamed (NDMF stores them under a
-    /// generated container path) — only the <see cref="Object.name"/> fields, so
-    /// hierarchy-window labels and inspector previews don't leak the originals.
+    /// generated container path) — only the <see cref="UnityEngine.Object.name"/>
+    /// fields, so hierarchy-window labels and inspector previews don't leak the
+    /// originals.
     ///
-    /// Mesh asset names are skipped when the user's options ask us to keep them
-    /// for MMD compatibility.
+    /// <para>Mesh asset names are skipped when the user's options ask us to keep
+    /// them for MMD compatibility.</para>
+    /// <para>Animation clip names are renamed when
+    /// <see cref="ObfuscationOptions.obfuscateAnimationClipNames"/> is set, with
+    /// VRChat proxy clips left untouched (they are referenced by name).</para>
     /// </summary>
     internal sealed class FinalizeAssetsPass : Pass<FinalizeAssetsPass>
     {
@@ -47,24 +54,65 @@ namespace FuckRipper.AvatarObfuscator.Passes
                 }
             }
 
+            // Collect every controller reachable from the avatar — animator
+            // controllers, plus the clips they reference. We use this for both
+            // the controller-rename step (when parameter obfuscation is on)
+            // and the clip-rename step (when clip-name obfuscation is on).
+            var controllers = new HashSet<AnimatorController>();
+#if FR_OBF_VRCSDK3_AVATARS
+            var descriptor = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
+            if (descriptor != null)
+            {
+                foreach (var layer in descriptor.baseAnimationLayers)
+                    if (layer.animatorController is AnimatorController ac) controllers.Add(ac);
+                foreach (var layer in descriptor.specialAnimationLayers)
+                    if (layer.animatorController is AnimatorController ac) controllers.Add(ac);
+            }
+#endif
+            foreach (var animator in context.AvatarRootObject.GetComponentsInChildren<Animator>(true))
+                if (animator.runtimeAnimatorController is AnimatorController ac) controllers.Add(ac);
+
             // Animator controllers and their sub-assets
             if (state.Options.obfuscateParameters)
             {
-#if FR_OBF_VRCSDK3_AVATARS
-                var descriptor = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
-                if (descriptor != null)
-                {
-                    foreach (var layer in descriptor.baseAnimationLayers)
-                        if (layer.animatorController is AnimatorController ac && context.IsTemporaryAsset(ac))
-                            RenameController(state, ac);
-                    foreach (var layer in descriptor.specialAnimationLayers)
-                        if (layer.animatorController is AnimatorController ac && context.IsTemporaryAsset(ac))
-                            RenameController(state, ac);
-                }
-#endif
-                foreach (var animator in context.AvatarRootObject.GetComponentsInChildren<Animator>(true))
-                    if (animator.runtimeAnimatorController is AnimatorController ac && context.IsTemporaryAsset(ac))
+                foreach (var ac in controllers)
+                    if (context.IsTemporaryAsset(ac))
                         RenameController(state, ac);
+            }
+
+            // Animation clips
+            if (state.Options.obfuscateAnimationClipNames)
+            {
+                var seen = new HashSet<AnimationClip>();
+                foreach (var ac in controllers)
+                {
+                    if (ac == null) continue;
+                    foreach (var clip in AnimatorWalker.AllClips(ac))
+                    {
+                        if (clip == null) continue;
+                        if (!seen.Add(clip)) continue;
+                        if (!context.IsTemporaryAsset(clip)) continue;
+#if FR_OBF_VRCSDK3_AVATARS
+                        if (IsProxyClip(clip)) continue;
+#endif
+                        clip.name = state.NameGen.Next();
+                    }
+                }
+
+                // Also rename AvatarMask assets that are temporary — they live
+                // alongside controllers and a ripper pulling the controller out
+                // would otherwise see the mask's original name.
+                foreach (var ac in controllers)
+                {
+                    if (ac == null) continue;
+                    foreach (var layer in ac.layers)
+                    {
+                        var mask = layer.avatarMask;
+                        if (mask == null) continue;
+                        if (!context.IsTemporaryAsset(mask)) continue;
+                        mask.name = state.NameGen.Next();
+                    }
+                }
             }
         }
 
@@ -99,5 +147,23 @@ namespace FuckRipper.AvatarObfuscator.Passes
                 layers[i].name = state.NameGen.Next();
             controller.layers = layers;
         }
+
+#if FR_OBF_VRCSDK3_AVATARS
+        // Same proxy detection as ObfuscateAnimationClipsPass — keep them in
+        // sync. VRChat resolves proxy clips by name, so renaming them would
+        // break locomotion / hand poses.
+        private static bool IsProxyClip(AnimationClip clip)
+        {
+            if (clip == null) return false;
+            var name = clip.name ?? "";
+            if (name.StartsWith("proxy_", StringComparison.Ordinal)) return true;
+            var path = AssetDatabase.GetAssetPath(clip);
+            if (!string.IsNullOrEmpty(path) && path.Contains("/AV3 Demo Assets/"))
+                return true;
+            if (!string.IsNullOrEmpty(path) && path.Contains("VRCSDK"))
+                return true;
+            return false;
+        }
+#endif
     }
 }

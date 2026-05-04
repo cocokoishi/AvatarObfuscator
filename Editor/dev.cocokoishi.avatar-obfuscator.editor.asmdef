@@ -30,11 +30,6 @@
             "name": "com.vrchat.avatars",
             "expression": "",
             "define": "FR_OBF_VRCSDK3_AVATARS"
-        },
-        {
-            "name": "com.anatawa12.avatar-optimizer",
-            "expression": "",
-            "define": "FR_OBF_HAS_AAO"
         }
     ],
     "noEngineReferences": false

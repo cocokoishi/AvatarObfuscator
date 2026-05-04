@@ -7,8 +7,6 @@ namespace FuckRipper.AvatarObfuscator.Inspector
     internal sealed class AvatarObfuscatorEditor : UnityEditor.Editor
     {
         private SerializedProperty _options;
-
-        // Cached child props
         private SerializedProperty _enabled;
         private SerializedProperty _params;
         private SerializedProperty _expParams;
@@ -17,28 +15,32 @@ namespace FuckRipper.AvatarObfuscator.Inspector
         private SerializedProperty _hierarchy;
         private SerializedProperty _preserveMmdBody;
         private SerializedProperty _meshAssets;
-        private SerializedProperty _mergeMaterials;
+        private SerializedProperty _clipNames;
+        private SerializedProperty _remapUv;
+        private SerializedProperty _autoMergeMesh;
         private SerializedProperty _rewriteClips;
         private SerializedProperty _seed;
         private SerializedProperty _nameLength;
 
-        private bool _showAdvanced = false;
+        private bool _showAdvanced;
 
         private void OnEnable()
         {
-            _options = serializedObject.FindProperty(nameof(AvatarObfuscator.options));
-            _enabled        = _options.FindPropertyRelative(nameof(ObfuscationOptions.enabled));
-            _params         = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateParameters));
-            _expParams      = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateExpressionParameters));
-            _blendShapes    = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateBlendShapes));
-            _preserveMmd    = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBlendShapes));
-            _hierarchy      = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateHierarchy));
-            _preserveMmdBody= _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBodyObject));
-            _meshAssets     = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateMeshAssetNames));
-            _mergeMaterials = _options.FindPropertyRelative(nameof(ObfuscationOptions.mergeIdenticalMaterials));
-            _rewriteClips   = _options.FindPropertyRelative(nameof(ObfuscationOptions.rewriteAnimationClips));
-            _seed           = _options.FindPropertyRelative(nameof(ObfuscationOptions.seed));
-            _nameLength     = _options.FindPropertyRelative(nameof(ObfuscationOptions.generatedNameLength));
+            _options         = serializedObject.FindProperty(nameof(AvatarObfuscator.options));
+            _enabled         = _options.FindPropertyRelative(nameof(ObfuscationOptions.enabled));
+            _params          = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateParameters));
+            _expParams       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateExpressionParameters));
+            _blendShapes     = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateBlendShapes));
+            _preserveMmd     = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBlendShapes));
+            _hierarchy       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateHierarchy));
+            _preserveMmdBody = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBodyObject));
+            _meshAssets      = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateMeshAssetNames));
+            _clipNames       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateAnimationClipNames));
+            _remapUv         = _options.FindPropertyRelative(nameof(ObfuscationOptions.remapUvTextures));
+            _autoMergeMesh   = _options.FindPropertyRelative(nameof(ObfuscationOptions.autoMergeSkinnedMesh));
+            _rewriteClips    = _options.FindPropertyRelative(nameof(ObfuscationOptions.rewriteAnimationClips));
+            _seed            = _options.FindPropertyRelative(nameof(ObfuscationOptions.seed));
+            _nameLength      = _options.FindPropertyRelative(nameof(ObfuscationOptions.generatedNameLength));
         }
 
         public override void OnInspectorGUI()
@@ -49,7 +51,7 @@ namespace FuckRipper.AvatarObfuscator.Inspector
             EditorGUILayout.HelpBox(
                 "Non-destructive. Runs at upload / play, on the cloned avatar that NDMF gives us. " +
                 "Removing this component fully reverts the build.\n\n" +
-                "Recommended pipeline placement: AFTER Avatar Optimizer.",
+                "Recommended pipeline placement: AFTER Avatar Optimizer / TexTransTool / Modular Avatar.",
                 MessageType.None);
 
             EditorGUILayout.Space();
@@ -106,13 +108,28 @@ namespace FuckRipper.AvatarObfuscator.Inspector
                 }
 
                 EditorGUILayout.Space();
-                Section("Materials");
-                RightAlignedToggle(_mergeMaterials, "Merge Identical Materials",
-                    "Detect materials whose serialized properties are byte-for-byte identical and replace " +
-                    "duplicates with a single canonical asset. Reduces draw calls without changing the look.");
+                Section("Texture / UV");
+                RightAlignedToggle(_remapUv, "Remap UV Textures",
+                    "For each material on the avatar, rebuild every Texture2D slot with a deterministic " +
+                    "flip and rewrite the corresponding mesh UV0 so the visual result is unchanged. The " +
+                    "produced textures are byte-different from the originals, so a ripper extracting your " +
+                    "avatar can't match them against the original asset by content hash. " +
+                    "Each material picks its own flip mode, so two visually-identical materials end up " +
+                    "with different texture bytes.\n\n" +
+                    "Skipped (with a console warning) for renderers where two submeshes share vertices " +
+                    "across different materials — a single vertex cannot carry two conflicting flips.");
 
                 EditorGUILayout.Space();
-                Section("Animation Clips");
+                Section("Mesh Merge (Optional)");
+                RightAlignedToggle(_autoMergeMesh, "Auto-Merge Skinned Mesh",
+                    "Optional draw-call optimisation. Merges SkinnedMeshRenderers that share a root " +
+                    "bone and pass a strict safety profile (no blendshapes, no animations referencing " +
+                    "their path, no special components on the GameObject).\n\n" +
+                    "OFF by default — this is NOT an obfuscation feature. If you also have Avatar " +
+                    "Optimizer's Trace and Optimize installed, leave this off and let AAO do the merge.");
+
+                EditorGUILayout.Space();
+                Section("Animation");
                 RightAlignedToggle(_rewriteClips, "Rewrite Animation Clip Bindings",
                     "Required whenever any of the rename options above is on. Walks every reachable " +
                     "AnimationClip and rewrites its path / property bindings. Keep ON unless you are " +
@@ -125,6 +142,12 @@ namespace FuckRipper.AvatarObfuscator.Inspector
                         "Animations referencing renamed paths / parameters / blendshapes WILL break.",
                         MessageType.Error);
                 }
+
+                RightAlignedToggle(_clipNames, "Animation Clip Asset Names",
+                    "Rename animation clip asset names to homoglyph nonsense, so a ripper extracting " +
+                    "your animator gets clip filenames like 'ÌÍÎÏÌÍÎÏ' instead of " +
+                    "'SitDown_Improved_v2.anim'. VRChat proxy animations are kept untouched (they are " +
+                    "referenced by name).");
 
                 EditorGUILayout.Space();
                 _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced", true);
@@ -140,7 +163,33 @@ namespace FuckRipper.AvatarObfuscator.Inspector
                 }
             }
 
+            // ----------------------------------------------------------------
+            // Project / author footer.
+            // ----------------------------------------------------------------
+            EditorGUILayout.Space();
+            DrawFooterLinks();
+
             serializedObject.ApplyModifiedProperties();
+        }
+
+        private static void DrawFooterLinks()
+        {
+            var rect = EditorGUILayout.GetControlRect(false, 1);
+            rect.height = 1;
+            EditorGUI.DrawRect(rect, new Color(0.5f, 0.5f, 0.5f, 0.3f));
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("Project", EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(AvatarObfuscator.ProjectUrl, EditorStyles.linkLabel))
+                    Application.OpenURL(AvatarObfuscator.ProjectUrl);
+            }
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField("Author", EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(AvatarObfuscator.AuthorUrl, EditorStyles.linkLabel))
+                    Application.OpenURL(AvatarObfuscator.AuthorUrl);
+            }
         }
 
         // ------------------------------------------------------------------
@@ -157,14 +206,11 @@ namespace FuckRipper.AvatarObfuscator.Inspector
         {
             const float ToggleWidth = 16f;
 
-            // GetControlRect already accounts for indentLevel.
             var rect = EditorGUILayout.GetControlRect(true, EditorGUIUtility.singleLineHeight);
 
-            // Label: takes everything up to where the toggle starts.
             var labelRect = rect;
             labelRect.width = rect.width - ToggleWidth;
 
-            // Toggle: pinned hard to the right edge, no indent.
             var toggleRect = new Rect(
                 rect.xMax - ToggleWidth,
                 rect.y,
@@ -173,7 +219,6 @@ namespace FuckRipper.AvatarObfuscator.Inspector
 
             EditorGUI.LabelField(labelRect, new GUIContent(label, tooltip));
 
-            // Bypass indentLevel for the toggle itself so it always sits flush right.
             int prevIndent = EditorGUI.indentLevel;
             EditorGUI.indentLevel = 0;
             try

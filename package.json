@@ -1,14 +1,15 @@
 {
   "name": "dev.cocokoishi.avatar-obfuscator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "displayName": "Cocokoishi Avatar Obfuscator",
-  "description": "Non-destructive, lossless obfuscation of VRChat avatars (parameters, animators, blendshapes, hierarchy, materials, animation clips). Runs at upload time on a clone, original avatar is never modified.",
+  "description": "Non-destructive, lossless obfuscation of VRChat avatars (parameters, animators, blendshapes, hierarchy, animation clip names, per-material UV-flipped textures). Runs at upload time on a clone, original avatar is never modified. Self-contained — does not depend on TexTransTool or Avatar Optimizer.",
   "unity": "2022.3",
   "author": {
     "name": "cocokoishi",
     "url": "https://space.bilibili.com/5145514"
   },
   "license": "MIT",
+  "url": "https://github.com/cocokoishi/AvatarObfuscator",
   "vpmDependencies": {
     "nadena.dev.ndmf": "^1.6.0",
     "com.vrchat.avatars": ">=3.7.0 <3.8.0"

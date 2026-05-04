@@ -49,10 +49,30 @@ namespace FuckRipper.AvatarObfuscator
                  "but turning it off provides an extra safety net.")]
         public bool obfuscateMeshAssetNames = true;
 
-        [Tooltip("Detect and merge materials whose serialized properties are identical. This reduces " +
-                 "draw calls and material slot count without changing the visual result. " +
-                 "Animation Clip material references are rewritten to point to the merged material.")]
-        public bool mergeIdenticalMaterials = true;
+        [Tooltip("Rename animation clip asset names to homoglyph nonsense, so a ripper extracting your " +
+                 "animator gets clip filenames like 'ÌÍÎÏÌÍÎÏ' instead of 'SitDown_Improved_v2'. " +
+                 "VRChat proxy animations are kept untouched (they are referenced by name).")]
+        public bool obfuscateAnimationClipNames = true;
+
+        [Header("Texture / UV")]
+        [Tooltip("For each material on the avatar, rebuild every texture slot with a deterministically " +
+                 "flipped copy and rewrite the corresponding mesh UV0 so the visual result is unchanged. " +
+                 "The new textures are byte-different from the originals, breaking content-addressable " +
+                 "asset matching by rippers. Each material picks its own flip mode (none / flipX / " +
+                 "flipY / flipBoth) so that two visually-identical materials end up with different " +
+                 "textures.\n\n" +
+                 "Skipped (with a console warning) for renderers where two submeshes share vertices " +
+                 "across different materials — a single vertex cannot carry two conflicting flips.")]
+        public bool remapUvTextures = true;
+
+        [Header("Mesh Merge (Optional)")]
+        [Tooltip("Optional. Merge skinned meshes that share root bone and a strict safety profile " +
+                 "(no blendshapes, no animations referencing their path, no special components) into a " +
+                 "single skinned mesh. This is a draw-call optimisation, NOT an obfuscation feature; " +
+                 "it is OFF by default.\n\n" +
+                 "If you also use Avatar Optimizer's Trace and Optimize, leave this OFF and let AAO " +
+                 "handle the merge — its dependency analysis is much more thorough than ours.")]
+        public bool autoMergeSkinnedMesh = false;
 
         [Header("Animation Clips")]
         [Tooltip("Rewrite every reachable AnimationClip so that its bindings (path, property name) " +
