@@ -1,0 +1,28 @@
+{
+    "name": "dev.cocokoishi.avatar-obfuscator.runtime",
+    "rootNamespace": "FuckRipper.AvatarObfuscator",
+    "references": [
+        "nadena.dev.ndmf.runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "VRC.Dynamics.dll",
+        "VRC.SDK3.Dynamics.PhysBone.dll",
+        "VRC.SDK3.Dynamics.Contact.dll",
+        "VRCSDK3A.dll",
+        "VRCSDKBase.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.vrchat.avatars",
+            "expression": "",
+            "define": "FR_OBF_VRCSDK3_AVATARS"
+        }
+    ],
+    "noEngineReferences": false
+}

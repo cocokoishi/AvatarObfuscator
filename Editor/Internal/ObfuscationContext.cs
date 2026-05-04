@@ -1,0 +1,90 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace FuckRipper.AvatarObfuscator.Internal
+{
+    /// <summary>
+    /// Per-build state shared between all obfuscator passes. Stored on the
+    /// <see cref="nadena.dev.ndmf.BuildContext"/> via <c>GetState&lt;T&gt;()</c>.
+    ///
+    /// Each pass writes the mappings it produces, and later passes consume them.
+    /// </summary>
+    internal sealed class ObfuscationContext
+    {
+        /// <summary>Whether the avatar carries an enabled <see cref="AvatarObfuscator"/> component.</summary>
+        public bool Enabled;
+
+        /// <summary>Effective options — a copy of the component's options, or defaults if disabled.</summary>
+        public ObfuscationOptions Options = new ObfuscationOptions { enabled = false };
+
+        /// <summary>Random-name source. Created lazily after <c>options</c> is known.</summary>
+        public NameGenerator NameGen;
+
+        // ------------------------------------------------------------------
+        // Parameter mapping
+        // ------------------------------------------------------------------
+        /// <summary>oldParameterName -> newParameterName, for the union of names across every animator and the VRC parameter list.</summary>
+        public readonly Dictionary<string, string> ParameterRenames = new Dictionary<string, string>();
+
+        /// <summary>oldPhysBonePrefix -> newPhysBonePrefix. PhysBones expand the prefix into <c>_IsGrabbed</c> etc; we rewrite the suffixed forms in animators using this map.</summary>
+        public readonly Dictionary<string, string> PhysBonePrefixRenames = new Dictionary<string, string>();
+
+        // ------------------------------------------------------------------
+        // Hierarchy mapping
+        // ------------------------------------------------------------------
+        /// <summary>oldFullPath -> newFullPath, both relative to the avatar root and using forward slashes. Includes a "" -> "" entry for the root itself.</summary>
+        public readonly Dictionary<string, string> PathRenames = new Dictionary<string, string>();
+
+        // ------------------------------------------------------------------
+        // Blendshape mapping
+        // ------------------------------------------------------------------
+        /// <summary>(skinnedMeshNewPath, oldBlendShapeName) -> newBlendShapeName.</summary>
+        public readonly Dictionary<(string Path, string Old), string> BlendShapeRenamesByPath =
+            new Dictionary<(string, string), string>();
+
+        /// <summary>
+        /// Same as <see cref="BlendShapeRenamesByPath"/>, but keyed by mesh asset.
+        /// Useful when an animator binding cannot resolve to a path because the
+        /// hierarchy was moved.
+        /// </summary>
+        public readonly Dictionary<(Mesh Mesh, string Old), string> BlendShapeRenamesByMesh =
+            new Dictionary<(Mesh, string), string>();
+
+        // ------------------------------------------------------------------
+        // Material replacements (RemapUVTexturePass and AutoMergeSkinnedMeshPass write here)
+        // ------------------------------------------------------------------
+        /// <summary>Material currently used by the avatar -> the canonical material that survives.</summary>
+        public readonly Dictionary<Material, Material> MaterialReplacements = new Dictionary<Material, Material>();
+
+        // ------------------------------------------------------------------
+        // Helpers
+        // ------------------------------------------------------------------
+        public string MapParameter(string original)
+        {
+            if (string.IsNullOrEmpty(original)) return original;
+            if (ParameterRenames.TryGetValue(original, out var renamed)) return renamed;
+            return original;
+        }
+
+        public Material MapMaterial(Material original)
+        {
+            if (original == null) return null;
+            return MaterialReplacements.TryGetValue(original, out var replacement) ? replacement : original;
+        }
+
+        public string MapPath(string original)
+        {
+            if (original == null) return null;
+            if (PathRenames.TryGetValue(original, out var renamed)) return renamed;
+            return original;
+        }
+
+        public string MapBlendShape(string newSmrPath, string oldBlendShape)
+        {
+            if (string.IsNullOrEmpty(oldBlendShape)) return oldBlendShape;
+            if (BlendShapeRenamesByPath.TryGetValue((newSmrPath, oldBlendShape), out var renamed))
+                return renamed;
+            return oldBlendShape;
+        }
+    }
+}
