@@ -103,38 +103,39 @@ jobs:
 
       - name: Prepare staging dir
         run: |
-          mkdir -p dist staging
-          # Copy the package source into a clean staging dir so we don't bundle
-          # CI / git artefacts.
+          mkdir -p dist staging/Assets
+          # Copy the package source into staging/Assets/<ROOT> so the
+          # create-unitypackage action sees a normal Unity project layout.
           rsync -a \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='dist' \
             --exclude='staging' \
             --exclude='*.unitypackage' \
-            "${{ env.PACKAGE_SOURCE }}/" "staging/${{ env.UNITYPACKAGE_ROOT }}/"
+            "${{ env.PACKAGE_SOURCE }}/" "staging/Assets/${{ env.UNITYPACKAGE_ROOT }}/"
 
       # --------------------------------------------------------------
       # Build the VPM-style .zip.
       # --------------------------------------------------------------
       - name: Build VPM .zip
         run: |
-          (cd "staging/${{ env.UNITYPACKAGE_ROOT }}" && \
+          (cd "staging/Assets/${{ env.UNITYPACKAGE_ROOT }}" && \
             zip -r "${GITHUB_WORKSPACE}/dist/${{ env.PACKAGE_NAME }}-${{ steps.ver.outputs.version }}.zip" .)
           ls -lh dist/
 
       # --------------------------------------------------------------
-      # Build the .unitypackage. Files inside live at:
-      #     Assets/<UNITYPACKAGE_ROOT>/...
-      # which is the canonical drop-in location.
+      # Build the .unitypackage using create-unitypackage action
+      # (no Unity installation required).
       # --------------------------------------------------------------
+      - name: Generate meta list
+        run: find staging -name '*.meta' | sort > metaList
+
       - name: Build .unitypackage
-        run: |
-          python3 .github/scripts/build_unitypackage.py \
-            --source "staging/${{ env.UNITYPACKAGE_ROOT }}" \
-            --asset-root "Assets/${{ env.UNITYPACKAGE_ROOT }}" \
-            --output "dist/${{ env.PACKAGE_NAME }}-${{ steps.ver.outputs.version }}.unitypackage"
-          ls -lh dist/
+        uses: pCYSl5EDgo/create-unitypackage@v1
+        with:
+          project-folder: staging
+          package-path: 'dist/${{ env.PACKAGE_NAME }}-${{ steps.ver.outputs.version }}.unitypackage'
+          include-files: metaList
 
       - name: Upload artifacts (always)
         uses: actions/upload-artifact@v4
