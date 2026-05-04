@@ -55,6 +55,12 @@ as a vertical stroke with a tiny dot or accent on top, visually
 indistinguishable from each other, but to Unity / VRChat / animation
 parsers they are four distinct identifiers.
 
+> If you have ever poked around an uploaded avatar and noticed certain
+> identifier strings already look like rows of identical-looking vertical
+> bars — yes, that is the same family of trick. We just apply it to a wider
+> set of names, before the upload, on a clone, with full animation
+> rebinding so nothing breaks.
+
 - **Animator Parameters** — every animator parameter referenced by every
   playable layer is renamed, with transitions, blend trees,
   `VRCAvatarParameterDriver`, PhysBone parameter prefixes, and

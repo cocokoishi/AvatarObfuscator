@@ -2,6 +2,38 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.1] - 2026-05-04
+
+### Fixed
+- **Material UV-flip remap rewritten to bake the flip into the material's
+  per-texture scale/offset (`_TextureName_ST`) instead of into mesh UV0.**
+  The old approach was visually correct only for materials whose textures all
+  used UV0 with identity tiling/offset (`(1, 1, 0, 0)`); on complex avatars
+  this caused widespread visual breakage:
+  - Materials with non-default tiling/offset (detail maps, scrolling textures,
+    atlased UVs, lilToon/Poiyomi shaders with tiled normal maps, etc.)
+    rendered with the wrong sampling coordinate, producing visible offsets
+    and stretching.
+  - Textures bound to UV1 / UV2 / UV3 (detail masks, matcap masks, AudioLink
+    UVs, dissolve masks) were flipped while their UV channel was not, mirroring
+    them.
+  - Tangent-space normal maps and parallax effects appeared inverted because
+    flipping mesh UV0 inverts the sign of `ddx(uv)` / `ddy(uv)` and flips
+    tangent-frame handedness.
+  - Cubemaps, render textures, etc. on the same material got UV-flipped
+    sampling even though they are not sampled with the material UV.
+
+  The flip is now applied purely on the material side — mesh UVs are never
+  modified — so any number of UV channels, arbitrary per-texture tiling/offset
+  values, normal maps, parallax, detail masks and matcap masks all stay
+  correct. Cubemaps and non-2D textures are left untouched in both pixel data
+  and sampling.
+
+### Removed
+- The "vertex sharing across submeshes" safety check and the resulting
+  console warning are no longer needed (the flip never touches mesh data, so
+  there is nothing to conflict).
+
 ## [0.2.0] - 2026-05-04
 
 ### Changed

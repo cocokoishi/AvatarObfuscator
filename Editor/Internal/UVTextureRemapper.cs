@@ -11,19 +11,19 @@ namespace FuckRipper.AvatarObfuscator.Internal
     /// Per-material UV-flip remapper.
     ///
     /// <para>For each material on the avatar, picks a deterministic flip mode
-    /// (none / flipX / flipY / flipBoth), regenerates every Texture2D bound to
-    /// that material with the inverse flip applied (so the asset bytes are
-    /// different from the original), and rewrites mesh UV0 of the renderers
-    /// that use the material so the visual result is unchanged.</para>
+    /// (FlipX / FlipY / FlipBoth) and bakes the inverse flip into <em>both</em>
+    /// the texture pixels <em>and</em> the material's per-texture
+    /// <c>scale / offset</c> (the <c>_TextureName_ST</c> properties), so that
+    /// the final sampling coordinate <c>mesh_uv * scale + offset</c> hits the
+    /// same pixel as the original. Mesh UV0 is NOT modified — this way any
+    /// number of texture slots with arbitrary <c>scale / offset</c> values, on
+    /// any UV channel, all stay correct simultaneously, and screen-space
+    /// derivatives (<c>ddx</c>/<c>ddy</c>) keep their original sign so
+    /// tangent-space normal maps and parallax effects are unaffected.</para>
     ///
-    /// <para>This is intentionally a minimal implementation — it does not
-    /// detect UV islands, does not relocate them, does not pack them. It
-    /// produces a byte-different texture (which defeats content-addressable
-    /// asset matching by rippers) at near-zero risk to visual fidelity.</para>
-    ///
-    /// <para>Vertices shared between two submeshes that map to differently-
-    /// flipped materials are detected and their renderer is skipped (with a
-    /// console warning) — a single vertex cannot carry two conflicting flips.</para>
+    /// <para>Material reference rewrites are recorded in
+    /// <see cref="ObfuscationContext.MaterialReplacements"/> so the
+    /// animation-clip pass redirects ObjectReference curves accordingly.</para>
     /// </summary>
     internal static class UVTextureRemapper
     {
@@ -49,6 +49,8 @@ namespace FuckRipper.AvatarObfuscator.Internal
 
             // ---------------------------------------------------------------
             // 1. Collect every material in use, and assign each one a flip mode.
+            //    Materials are obfuscated individually — there is no per-vertex
+            //    flip conflict possible because we do NOT touch mesh UVs.
             // ---------------------------------------------------------------
             var allMaterials = new HashSet<Material>();
             foreach (var r in renderers)
@@ -68,83 +70,19 @@ namespace FuckRipper.AvatarObfuscator.Internal
             }
 
             // ---------------------------------------------------------------
-            // 2. Detect unsafe renderers (vertex sharing across submeshes that
-            //    would receive conflicting flips). Mark every material that
-            //    participates in any such conflict as "do not flip" so the
-            //    renderer's mesh stays untouched.
-            // ---------------------------------------------------------------
-            var unsafeMaterials = new HashSet<Material>();
-            foreach (var r in renderers)
-            {
-                if (r == null) continue;
-                var mesh = GetSharedMesh(r);
-                if (mesh == null) continue;
-                if (!mesh.isReadable) continue; // we'll skip silently when we get to it
-
-                var mats = r.sharedMaterials;
-                int slotCount = Mathf.Min(mats.Length, mesh.subMeshCount);
-
-                // Per-vertex flip claim. If a vertex is hit by two submeshes
-                // whose materials want different flips, mark all those materials
-                // as unsafe.
-                var claim = new Dictionary<int, FlipMode>();
-                for (int s = 0; s < slotCount; s++)
-                {
-                    var mat = mats[s];
-                    if (mat == null) continue;
-                    if (!flipFor.TryGetValue(mat, out var f)) continue;
-
-                    foreach (var v in EnumerateSubmeshVertices(mesh, s))
-                    {
-                        if (claim.TryGetValue(v, out var existing))
-                        {
-                            if (existing != f)
-                            {
-                                // Conflict — both materials become unsafe.
-                                unsafeMaterials.Add(mat);
-                                // Walk back and find the materials that placed the existing claim.
-                                for (int s2 = 0; s2 < slotCount; s2++)
-                                {
-                                    var m2 = mats[s2];
-                                    if (m2 == null) continue;
-                                    if (m2 == mat) continue;
-                                    if (flipFor.TryGetValue(m2, out var f2) && f2 == existing)
-                                    {
-                                        // Rough heuristic; if multiple materials hold the same flip mode
-                                        // on this renderer, all candidate ones get marked unsafe.
-                                        if (DoesSubmeshUseVertex(mesh, s2, v))
-                                            unsafeMaterials.Add(m2);
-                                    }
-                                }
-                            }
-                        }
-                        else
-                        {
-                            claim[v] = f;
-                        }
-                    }
-                }
-            }
-
-            if (unsafeMaterials.Count > 0)
-            {
-                Debug.LogWarning(
-                    $"[AvatarObfuscator] UV remap: {unsafeMaterials.Count} material(s) skipped because " +
-                    $"they share vertices with another submesh on the same renderer that would receive " +
-                    $"a conflicting UV flip. Affected materials: " +
-                    string.Join(", ", unsafeMaterials.Select(m => m.name).Take(8)) +
-                    (unsafeMaterials.Count > 8 ? ", ..." : ""));
-                foreach (var m in unsafeMaterials) flipFor.Remove(m);
-            }
-
-            if (flipFor.Count == 0) return;
-
-            // ---------------------------------------------------------------
-            // 3. Build the per-material remapped material (with flipped textures).
+            // 2. Build the per-material remapped material with flipped textures
+            //    and matching scale/offset on every texture slot.
+            //
+            //    A texture that is referenced by N materials with N different
+            //    flip modes naturally produces N flipped copies — that is the
+            //    desired behaviour: two visually-identical materials end up
+            //    with byte-different texture assets.
             // ---------------------------------------------------------------
             var remappedMaterial = new Dictionary<Material, Material>(flipFor.Count);
-            foreach (var (orig, flip) in flipFor.Select(kv => (kv.Key, kv.Value)))
+            foreach (var kv in flipFor)
             {
+                var orig = kv.Key;
+                var flip = kv.Value;
                 var newMat = BuildRemappedMaterial(context, orig, flip);
                 if (newMat == null) continue;
                 remappedMaterial[orig] = newMat;
@@ -154,76 +92,27 @@ namespace FuckRipper.AvatarObfuscator.Internal
             if (remappedMaterial.Count == 0) return;
 
             // ---------------------------------------------------------------
-            // 4. Rewrite mesh UV0 + renderer.sharedMaterials for every renderer.
+            // 3. Swap each renderer's material slots to the remapped versions.
+            //    No mesh UVs are touched — the flip is fully baked into the
+            //    texture pixels and the per-texture scale/offset on the new
+            //    material.
             // ---------------------------------------------------------------
-            var clonedMeshByRenderer = new Dictionary<Renderer, Mesh>();
             foreach (var r in renderers)
             {
                 if (r == null) continue;
-                var mesh = GetSharedMesh(r);
-                if (mesh == null) continue;
                 var mats = r.sharedMaterials;
-                int slotCount = Mathf.Min(mats.Length, mesh.subMeshCount);
-
-                // Decide which slots have a remap. If none, no work for this renderer.
-                var slotFlip = new Dictionary<int, FlipMode>();
-                for (int s = 0; s < slotCount; s++)
-                {
-                    var mat = mats[s];
-                    if (mat != null && flipFor.TryGetValue(mat, out var f) && f != FlipMode.None)
-                        slotFlip[s] = f;
-                }
-                if (slotFlip.Count == 0)
-                {
-                    // Still rewrite material slot if any are remapped to a NEW mat (none here).
-                    bool anySwap = false;
-                    for (int s = 0; s < mats.Length; s++)
-                        if (mats[s] != null && remappedMaterial.TryGetValue(mats[s], out var rep) && rep != mats[s])
-                        { mats[s] = rep; anySwap = true; }
-                    if (anySwap) r.sharedMaterials = mats;
-                    continue;
-                }
-
-                if (!mesh.isReadable)
-                {
-                    Debug.LogWarning(
-                        $"[AvatarObfuscator] UV remap skipped for renderer '{r.name}': mesh '{mesh.name}' " +
-                        $"is not Read/Write enabled on its importer. Enable Read/Write or accept the " +
-                        $"original textures for this renderer.");
-                    // Without mesh access we cannot remap UV — skip mat swap too, otherwise
-                    // we'd have a flipped texture being sampled with the original UV.
-                    continue;
-                }
-
-                // Get-or-clone the mesh.
-                if (!clonedMeshByRenderer.TryGetValue(r, out var workMesh))
-                {
-                    workMesh = Object.Instantiate(mesh);
-                    workMesh.name = mesh.name;
-                    context.AssetSaver.SaveAsset(workMesh);
-                    ObjectRegistry.RegisterReplacedObject(mesh, workMesh);
-                    SetSharedMesh(r, workMesh);
-                    clonedMeshByRenderer[r] = workMesh;
-                }
-
-                // Per-vertex flip mode. Pre-validated to be conflict-free above.
-                var vertexToFlip = new Dictionary<int, FlipMode>();
-                foreach (var (slot, flip) in slotFlip.Select(kv => (kv.Key, kv.Value)))
-                {
-                    foreach (var v in EnumerateSubmeshVertices(workMesh, slot))
-                        vertexToFlip[v] = flip;
-                }
-
-                ApplyUVFlip(workMesh, vertexToFlip);
-
-                // Swap materials.
-                bool anySwap2 = false;
+                bool anySwap = false;
                 for (int s = 0; s < mats.Length; s++)
                 {
-                    if (mats[s] != null && remappedMaterial.TryGetValue(mats[s], out var rep) && rep != mats[s])
-                    { mats[s] = rep; anySwap2 = true; }
+                    if (mats[s] != null
+                        && remappedMaterial.TryGetValue(mats[s], out var rep)
+                        && rep != mats[s])
+                    {
+                        mats[s] = rep;
+                        anySwap = true;
+                    }
                 }
-                if (anySwap2) r.sharedMaterials = mats;
+                if (anySwap) r.sharedMaterials = mats;
             }
         }
 
@@ -235,11 +124,21 @@ namespace FuckRipper.AvatarObfuscator.Internal
         {
             if (src == null || src.shader == null) return null;
 
+            // Object.Instantiate carries over every serialized field on the
+            // material — shader, render queue override, shader keywords, every
+            // float/color/vector/int property, every texture binding, every
+            // texture's scale & offset. We then mutate the copy in place: flip
+            // textures and bake the inverse flip into the corresponding ST
+            // values.
             var copy = Object.Instantiate(src);
             copy.name = src.name;
             context.AssetSaver.SaveAsset(copy);
 
-            // For every Texture2D slot, create a flipped copy and rebind.
+            // Cache: the same source Texture2D might be bound to multiple slots
+            // on the same material (e.g. _MainTex == _DetailMask). We only flip
+            // it once and reuse the result so we don't duplicate work or assets.
+            var flippedCache = new Dictionary<Texture2D, Texture2D>();
+
             int propCount = ShaderUtil.GetPropertyCount(src.shader);
             for (int p = 0; p < propCount; p++)
             {
@@ -247,26 +146,80 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 var propName = ShaderUtil.GetPropertyName(src.shader, p);
                 var t = src.GetTexture(propName);
                 if (t == null) continue;
-                if (!(t is Texture2D t2d))
+
+                // Cubemaps, 3D textures, render textures, 2D arrays — these are
+                // not sampled with the mesh UV / material ST in the same way;
+                // we keep them untouched and DO NOT touch their ST either.
+                if (!(t is Texture2D t2d)) continue;
+
+                // Flip the texture (cached so we don't re-blit shared textures).
+                if (!flippedCache.TryGetValue(t2d, out var flipped))
                 {
-                    // Cubemaps, RTs, 3D textures — keep as-is. We only flip 2D.
-                    continue;
+                    flipped = BuildFlippedTexture(t2d, flip);
+                    if (flipped != null)
+                    {
+                        flipped.name = src.name + "_" + SanitizePropertyName(propName);
+                        context.AssetSaver.SaveAsset(flipped);
+                        ObjectRegistry.RegisterReplacedObject(t2d, flipped);
+                    }
+                    flippedCache[t2d] = flipped;
                 }
 
-                var flipped = BuildFlippedTexture(t2d, flip);
                 if (flipped == null) continue;
-                flipped.name = src.name + "_" + SanitizePropertyName(propName);
-                context.AssetSaver.SaveAsset(flipped);
-                ObjectRegistry.RegisterReplacedObject(t2d, flipped);
 
                 copy.SetTexture(propName, flipped);
-                // Tile/offset are kept as-is on the new material; the flip is fully
-                // baked into the texture pixels and the mesh UVs.
+
+                // Bake the inverse flip into the per-texture scale/offset so
+                // that the final sampling coordinate
+                //   final = mesh_uv * scale_new + offset_new
+                // satisfies
+                //   flipped_tex(final) == original_tex(mesh_uv * scale_old + offset_old)
+                // for every mesh_uv simultaneously.
+                //
+                // Since flipped_tex(p) = original_tex(1 - p) along each flipped
+                // axis, we need:
+                //   1 - (mesh_uv * scale_new + offset_new) == mesh_uv * scale_old + offset_old
+                // which solves to:
+                //   scale_new = -scale_old
+                //   offset_new = 1 - offset_old - scale_old
+                // along each flipped axis. Unflipped axes are left as-is.
+                var oldScale  = src.GetTextureScale(propName);
+                var oldOffset = src.GetTextureOffset(propName);
+                var newScale  = oldScale;
+                var newOffset = oldOffset;
+
+                if (flip == FlipMode.FlipX || flip == FlipMode.FlipBoth)
+                {
+                    newScale.x  = -oldScale.x;
+                    newOffset.x = 1f - oldOffset.x - oldScale.x;
+                }
+                if (flip == FlipMode.FlipY || flip == FlipMode.FlipBoth)
+                {
+                    newScale.y  = -oldScale.y;
+                    newOffset.y = 1f - oldOffset.y - oldScale.y;
+                }
+
+                copy.SetTextureScale(propName, newScale);
+                copy.SetTextureOffset(propName, newOffset);
             }
 
             return copy;
         }
 
+        // ====================================================================
+        // Texture flip
+        // ====================================================================
+
+        /// <summary>
+        /// Produce a Texture2D that is the input texture mirrored along the
+        /// requested axes. Internally uses Graphics.Blit on a render texture
+        /// so the source asset does not need Read/Write enabled. Color space
+        /// is preserved by reading the importer's sRGB flag when available.
+        ///
+        /// <para>The original texture format is replaced with RGBA32 — the
+        /// alternative is to deal with every BC/ETC variant and the build-time
+        /// platform recompression handles compression for us downstream.</para>
+        /// </summary>
         private static Texture2D BuildFlippedTexture(Texture2D src, FlipMode flip)
         {
             if (src == null) return null;
@@ -276,9 +229,12 @@ namespace FuckRipper.AvatarObfuscator.Internal
             int h = src.height;
             if (w <= 0 || h <= 0) return null;
 
-            // sRGB / linear is read from the asset import settings. Default to
-            // sRGB unless the importer explicitly says linear — same heuristic
-            // as the previous TextureAtlasBuilder.
+            // Determine the source's color space. We default to sRGB and only
+            // mark a texture linear when the importer explicitly says so.
+            // Built-in textures and runtime-generated textures (no asset path)
+            // fall back to sRGB which is the conservative choice for albedo /
+            // emission / etc.; users with linear-space mask textures can mark
+            // them as such on the importer.
             bool linear = false;
             var path = AssetDatabase.GetAssetPath(src);
             if (!string.IsNullOrEmpty(path))
@@ -333,113 +289,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 if (System.IO.Path.GetInvalidFileNameChars().Contains(c)) chars[i] = '_';
             }
             return new string(chars);
-        }
-
-        // ====================================================================
-        // Mesh helpers
-        // ====================================================================
-
-        private static Mesh GetSharedMesh(Renderer r)
-        {
-            if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
-            if (r.TryGetComponent<MeshFilter>(out var mf)) return mf.sharedMesh;
-            return null;
-        }
-
-        private static void SetSharedMesh(Renderer r, Mesh m)
-        {
-            if (r is SkinnedMeshRenderer smr) { smr.sharedMesh = m; return; }
-            if (r.TryGetComponent<MeshFilter>(out var mf)) mf.sharedMesh = m;
-        }
-
-        private static IEnumerable<int> EnumerateSubmeshVertices(Mesh mesh, int submeshIndex)
-        {
-            if (submeshIndex < 0 || submeshIndex >= mesh.subMeshCount) yield break;
-            var indices = mesh.GetIndices(submeshIndex);
-            for (int i = 0; i < indices.Length; i++) yield return indices[i];
-        }
-
-        private static bool DoesSubmeshUseVertex(Mesh mesh, int submeshIndex, int vertex)
-        {
-            if (submeshIndex < 0 || submeshIndex >= mesh.subMeshCount) return false;
-            var indices = mesh.GetIndices(submeshIndex);
-            for (int i = 0; i < indices.Length; i++)
-                if (indices[i] == vertex) return true;
-            return false;
-        }
-
-        private static void ApplyUVFlip(Mesh mesh, Dictionary<int, FlipMode> vertexToFlip)
-        {
-            // Preserve the channel's storage dimensionality — some VRChat shaders
-            // pack data in UV0.zw (matcap masks, audio link UVs, dissolve coords).
-            // Using SetUVs(0, List<Vector2>) on a Vector3/Vector4 channel would
-            // silently downgrade the channel and drop the packed data.
-            var dim = mesh.GetVertexAttributeDimension(UnityEngine.Rendering.VertexAttribute.TexCoord0);
-            if (dim <= 0)
-            {
-                // No UV0 — without UVs the texture sample position is undefined.
-                // Nothing to flip; leave the mesh alone.
-                return;
-            }
-
-            switch (dim)
-            {
-                case 2:
-                {
-                    var uvs = new List<Vector2>(mesh.vertexCount);
-                    mesh.GetUVs(0, uvs);
-                    if (uvs.Count == 0) return;
-                    foreach (var (v, flip) in vertexToFlip.Select(kv => (kv.Key, kv.Value)))
-                    {
-                        if (v < 0 || v >= uvs.Count) continue;
-                        var u = uvs[v];
-                        uvs[v] = ApplyFlip2(u, flip);
-                    }
-                    mesh.SetUVs(0, uvs);
-                    break;
-                }
-                case 3:
-                {
-                    var uvs = new List<Vector3>(mesh.vertexCount);
-                    mesh.GetUVs(0, uvs);
-                    if (uvs.Count == 0) return;
-                    foreach (var (v, flip) in vertexToFlip.Select(kv => (kv.Key, kv.Value)))
-                    {
-                        if (v < 0 || v >= uvs.Count) continue;
-                        var u = uvs[v];
-                        var f = ApplyFlip2(new Vector2(u.x, u.y), flip);
-                        uvs[v] = new Vector3(f.x, f.y, u.z);
-                    }
-                    mesh.SetUVs(0, uvs);
-                    break;
-                }
-                default: // 4 or unexpected
-                {
-                    var uvs = new List<Vector4>(mesh.vertexCount);
-                    mesh.GetUVs(0, uvs);
-                    if (uvs.Count == 0) return;
-                    foreach (var (v, flip) in vertexToFlip.Select(kv => (kv.Key, kv.Value)))
-                    {
-                        if (v < 0 || v >= uvs.Count) continue;
-                        var u = uvs[v];
-                        var f = ApplyFlip2(new Vector2(u.x, u.y), flip);
-                        uvs[v] = new Vector4(f.x, f.y, u.z, u.w);
-                    }
-                    mesh.SetUVs(0, uvs);
-                    break;
-                }
-            }
-        }
-
-        private static Vector2 ApplyFlip2(Vector2 u, FlipMode flip)
-        {
-            switch (flip)
-            {
-                case FlipMode.FlipX:    return new Vector2(1f - u.x, u.y);
-                case FlipMode.FlipY:    return new Vector2(u.x, 1f - u.y);
-                case FlipMode.FlipBoth: return new Vector2(1f - u.x, 1f - u.y);
-                default:                return u;
-            }
         }
 
         // ====================================================================

@@ -7,10 +7,12 @@ namespace FuckRipper.AvatarObfuscator.Passes
     /// Per-material UV-flip remap. Replaces the previous material-merge pass.
     ///
     /// <para>For every material on the avatar, picks a deterministic flip mode
-    /// and rebuilds the material's textures with that flip baked in, while
-    /// rewriting mesh UV0 of the renderers that use the material so the visual
-    /// result is unchanged. The new textures and materials are byte-different
-    /// from the originals, breaking content-addressable asset matching.</para>
+    /// and rebuilds the material's textures with that flip applied, while
+    /// baking the inverse flip into the material's per-texture
+    /// <c>scale / offset</c> (<c>_TextureName_ST</c>). Mesh UVs are NOT
+    /// touched — the flip lives entirely on the material — so any number of
+    /// UV channels, arbitrary tiling/offset values, normal maps and parallax
+    /// effects all stay correct simultaneously.</para>
     ///
     /// <para>This pass DOES NOT merge materials — every input material
     /// produces exactly one output material.</para>

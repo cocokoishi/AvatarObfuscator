@@ -55,14 +55,16 @@ namespace FuckRipper.AvatarObfuscator
         public bool obfuscateAnimationClipNames = true;
 
         [Header("Texture / UV")]
-        [Tooltip("For each material on the avatar, rebuild every texture slot with a deterministically " +
-                 "flipped copy and rewrite the corresponding mesh UV0 so the visual result is unchanged. " +
-                 "The new textures are byte-different from the originals, breaking content-addressable " +
-                 "asset matching by rippers. Each material picks its own flip mode (none / flipX / " +
-                 "flipY / flipBoth) so that two visually-identical materials end up with different " +
-                 "textures.\n\n" +
-                 "Skipped (with a console warning) for renderers where two submeshes share vertices " +
-                 "across different materials — a single vertex cannot carry two conflicting flips.")]
+        [Tooltip("For each material on the avatar, rebuild every Texture2D slot with a deterministically " +
+                 "flipped copy and bake the inverse flip into the material's per-texture scale/offset " +
+                 "(the _TextureName_ST values) so the visual result is unchanged. The new textures are " +
+                 "byte-different from the originals, breaking content-addressable asset matching by " +
+                 "rippers. Each material picks its own flip mode (flipX / flipY / flipBoth) so that " +
+                 "two visually-identical materials end up with different textures.\n\n" +
+                 "Mesh UVs are NOT modified — the flip is purely a per-material change — so any number " +
+                 "of UV channels (UV0/UV1/UV2/UV3), arbitrary per-texture tiling/offset, normal maps, " +
+                 "parallax effects, detail masks, matcap masks etc. all stay correct. Cubemaps and " +
+                 "render textures are kept untouched.")]
         public bool remapUvTextures = true;
 
         [Header("Mesh Merge (Optional)")]
