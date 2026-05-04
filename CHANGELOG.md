@@ -2,6 +2,69 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.6] - 2026-05-04
+
+### Fixed
+- **Critical: v0.2.4 / v0.2.5's per-island in-place involutions
+  (FlipH / FlipV / Rot180) produced obfuscated textures that, when viewed
+  as image files, looked virtually indistinguishable from the source.**
+  Each island was just being mirrored within its own bbox, so the pixel
+  histogram, dominant feature positions, and (for symmetric islands)
+  most pixel content stayed put — a ripper running an inexact match
+  (perceptual hash, downsampled-image diff, content-based search) could
+  still link the obfuscated texture to the asset-store original.
+- **Critical: bilinear-filter seams at island bbox edges.** Adjacent
+  islands' transformed regions could leak each other's colour into the
+  bilinear taps that crossed the bbox boundary, producing a visible
+  one-pixel mismatch line on tightly packed atlases.
+
+  Both are fixed by switching to genuine atlas-style relocation:
+  - The packer is **Next-Fit Decreasing Height** (NFDH), the same
+    base algorithm TexTransTool's `NFDHPlasFC` uses, minus the 90°
+    rotation flag for code simplicity. Islands are sorted tall-first
+    and laid out into [0,1]² UV rows.
+  - Every island is **translated** to a new position — its UVs and its
+    pixel content move together. The result genuinely repacks: islands
+    end up in different rows, different columns, with completely
+    different free-space distribution from the source. Visually
+    inspecting the obfuscated texture file now shows clearly that
+    it's been rearranged.
+  - **Per-island padding skirt.** Each island gets a 0.005-UV (≈ 5 px
+    at 1K, ≈ 20 px at 4K, floored at 2 px) edge-replicate dilation
+    around its placed bbox in the rearranged texture. Bilinear and
+    mip-chain taps that cross the strict bbox boundary now pull a
+    smoothly-extended copy of the island's own border colour instead
+    of a neighbour island's pixels — the v0.2.4/v0.2.5 seam is gone.
+  - **Cross-mesh consistency.** A texture sampled by islands from
+    multiple meshes only gets repainted when every contributing mesh's
+    NFDH succeeded; otherwise the texture (and every island that
+    touches it) reverts to identity via a fixed-point loop. This trades
+    a little obfuscation aggressiveness for predictable correctness in
+    the rare avatars that share texture atlases across meshes.
+  - **NFDH failure fallback** (tightly packed atlases > ~80% UV
+    coverage). If NFDH can't fit a mesh's islands inside [0,1]²
+    (including each island's padding skirt), the entire mesh stays at
+    identity — no obfuscation rather than partial / broken output. A
+    future version can swap in a more aggressive packer (NFDH+rotation,
+    or a guillotine packer) to handle these.
+
+### Removed
+- The `IslandTransform` enum and its FlipH / FlipV / Rot180 within-bbox
+  involution branch — replaced by the single `Translation` vector and
+  `IsPacked` flag on `UvIsland`. The pixel transform is now an
+  index-clamping copy plus skirt, not a per-pixel mirror.
+
+### Known limitations
+- Tightly packed atlases (> ~80% UV coverage including padding) currently
+  fall back to identity per the NFDH failure path. NFDH+rotation would
+  raise the ceiling to ~90%; a guillotine / shelf-best-fit packer could
+  push close to 95%. Not implemented here to keep the change minimal.
+- UV1 / UV2 / UV3 are translated through the same per-island deltas as
+  UV0 (carried over from v0.2.4). Shaders sampling auxiliary maps via
+  UV1+ with a layout that differs from UV0 will misrender those maps.
+- HDR formats (BC6H, RGBAFloat, ASTC HDR, …) skip the rearrangement
+  pipeline entirely.
+
 ## [0.2.5] - 2026-05-04
 
 ### Added

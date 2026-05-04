@@ -10,42 +10,61 @@ using Object = UnityEngine.Object;
 namespace FuckRipper.AvatarObfuscator.Internal
 {
     /// <summary>
-    /// Per-UV-island texture rearrangement obfuscator.
+    /// Per-UV-island texture rearrangement obfuscator (atlas-style relocation).
     ///
-    /// <para>This is the same principle as TTT's <c>AtlasTexture</c> — even a
-    /// "single-texture atlas group" rearranges UV islands at pack time, which
-    /// produces a byte-different texture without altering the visible result.
-    /// We adopt that mental model here: every texture on the avatar is treated
-    /// as its own one-texture atlas group, its UV islands are detected via the
-    /// same union-find approach TTT uses (<c>IslandUtility</c>), and each
-    /// island gets a deterministic within-bbox transform (FlipH / FlipV /
-    /// Rot180). Mesh UVs are rewritten in lockstep with the texture-pixel
-    /// transform so visuals remain identical.</para>
+    /// <para>Mirrors TexTransTool's <c>AtlasTexture</c>: every texture is
+    /// treated as a one-texture atlas group, its UV islands are detected via
+    /// union-find on shared UV positions (<c>IslandUtility.UVtoIsland</c>),
+    /// and the islands are repacked into the [0,1]² UV square via Next-Fit
+    /// Decreasing Height (the same NFDH variant TTT uses, just without 90°
+    /// rotation for code simplicity). Islands move to genuinely new positions
+    /// — not in-place flips — so the rearranged texture visibly differs from
+    /// the source while the rendered avatar stays pixel-identical (mesh UVs
+    /// are translated in lockstep).</para>
     ///
-    /// <para>Why per-island, not per-tile: a uniform N×N tile permutation tears
-    /// any triangle whose three UV vertices fall in different tiles — the GPU
-    /// linearly interpolates UV across the triangle, which after a per-vertex
-    /// tile remap samples disjoint regions of the shuffled texture. Per-island
-    /// transforms avoid this because every triangle's three vertices belong to
-    /// the same island by construction (they share vertex indices, hence the
-    /// same union-find component), so all three vertices receive the same
-    /// transform and the triangle moves as a unit.</para>
+    /// <para>Each island is allocated a small padding band (≈ 0.005 UV, 5 px
+    /// at 1K) around its placed bbox; that band is filled by edge-replicating
+    /// the island's own border colour, so bilinear / mip filtering at island
+    /// boundaries doesn't bleed in pixels from a neighbouring island that the
+    /// packer happened to place adjacent. This kills the v0.2.4 boundary-seam
+    /// artefact.</para>
     ///
-    /// <para>Why FlipH / FlipV / Rot180 (and not arbitrary translations): each
-    /// of these is a within-bbox involution, so the island stays inside its
-    /// own UV bbox and the texture-pixel transform stays inside the same
-    /// bbox of pixels. Two different islands that happen to share overlapping
-    /// bboxes therefore can't both apply non-identity transforms without
-    /// corrupting each other; we resolve such conflicts by giving the smaller
-    /// island the identity transform (largest-island-first ordering).</para>
+    /// <para>Algorithm overview:</para>
+    /// <list type="number">
+    /// <item>Collect every renderer / material / Texture2D / unique mesh.</item>
+    /// <item>Per mesh, detect UV0 islands via union-find.</item>
+    /// <item>Per mesh, run NFDH packing on the island bboxes (with padding).
+    /// Each island either gets a per-vertex translation or is left untouched
+    /// if NFDH ran out of room.</item>
+    /// <item>For every texture, re-paint a clone: copy each packed island's
+    /// source bbox (plus a padding skirt of edge-replicated colour) to the
+    /// island's translated target position. Untouched regions retain the
+    /// source pixels (identity backing) so any UVs that didn't belong to any
+    /// island still sample correctly.</item>
+    /// <item>Per mesh, clone and apply per-island UV translations to all four
+    /// UV channels.</item>
+    /// </list>
+    ///
+    /// <para>Cross-mesh shared textures: if a texture is sampled by islands
+    /// from multiple meshes, the rearranged texture can only be painted
+    /// when every contributing mesh's NFDH succeeded. Otherwise the texture
+    /// (and every island that touches it) reverts to identity — a fixed-
+    /// point loop propagates that revert until stable. This trades a little
+    /// obfuscation aggressiveness for predictable correctness.</para>
     ///
     /// <para>Material reference rewrites are recorded in
-    /// <see cref="ObfuscationContext.MaterialReplacements"/> and mesh
-    /// replacements in <see cref="ObfuscationContext.MeshReplacements"/> so the
-    /// animation-clip pass redirects ObjectReference curves accordingly.</para>
+    /// <see cref="ObfuscationContext.MaterialReplacements"/>; mesh
+    /// replacements in <see cref="ObfuscationContext.MeshReplacements"/>; both
+    /// are consumed by <c>ObfuscateAnimationClipsPass</c> to redirect
+    /// ObjectReference curves.</para>
     /// </summary>
     internal static class UVTextureRemapper
     {
+        /// <summary>UV-space padding around each island in the packed layout.</summary>
+        private const float PaddingUv = 0.005f;
+        /// <summary>Hard floor on the pixel-space padding (so very small textures still get a usable skirt).</summary>
+        private const int MinPaddingPixels = 2;
+
         // ====================================================================
         // Public entry
         // ====================================================================
@@ -55,33 +74,26 @@ namespace FuckRipper.AvatarObfuscator.Internal
             var renderers = context.AvatarRootObject.GetComponentsInChildren<Renderer>(true);
 
             // ---------------------------------------------------------------
-            // 1. Collect every material and every Texture2D in use.
-            //    Also collect the unique meshes we'll need to scan for islands.
+            // 1. Collect every material / Texture2D / unique mesh.
             // ---------------------------------------------------------------
             var allMaterials = new HashSet<Material>();
-            var allTextures = new HashSet<Texture2D>();
             var allMeshes = new HashSet<Mesh>();
             foreach (var r in renderers)
             {
                 if (r == null) continue;
                 var srcMesh = GetSharedMesh(r);
                 if (srcMesh != null) allMeshes.Add(srcMesh);
+                if (r.sharedMaterials == null) continue;
                 foreach (var m in r.sharedMaterials)
                 {
                     if (m == null || m.shader == null) continue;
                     allMaterials.Add(m);
-                    EnumerateMaterialTextures(m, allTextures);
                 }
             }
             if (allMaterials.Count == 0 || allMeshes.Count == 0) return;
 
-            int avatarSeed = context.AvatarRootObject != null
-                ? context.AvatarRootObject.GetInstanceID()
-                : 42;
-
             // ---------------------------------------------------------------
-            // 2. Per-mesh, detect UV0 islands via union-find on shared UVs.
-            //    Cache by Mesh asset (multiple renderers may share a mesh).
+            // 2. Per-mesh UV0 island detection (union-find on shared UVs).
             // ---------------------------------------------------------------
             var meshIslands = new Dictionary<Mesh, List<UvIsland>>();
             foreach (var mesh in allMeshes)
@@ -96,9 +108,8 @@ namespace FuckRipper.AvatarObfuscator.Internal
             // 3. Build texture → list of (mesh, island) entries.
             //    For each renderer × submesh, the assigned material's textures
             //    are sampled by the islands that own at least one triangle in
-            //    that submesh. We avoid double-counting via a HashSet, and
-            //    cache the vertex → island map per mesh so renderers sharing
-            //    the same mesh / multiple submeshes don't pay the rebuild cost.
+            //    that submesh. Cache the vertex → island map per mesh so
+            //    multiple submeshes / multiple renderers don't pay the rebuild.
             // ---------------------------------------------------------------
             var textureIslands = new Dictionary<Texture2D, List<MeshIsland>>();
             var seen = new HashSet<(Texture2D, Mesh, UvIsland)>();
@@ -112,8 +123,9 @@ namespace FuckRipper.AvatarObfuscator.Internal
                     vertToIsland = vertToIslandCache[mesh] = BuildVertToIsland(islands);
 
                 var mats = r.sharedMaterials;
+                if (mats == null) continue;
                 int submeshCount = mesh.subMeshCount;
-                int slotCount = Math.Min(mats != null ? mats.Length : 0, submeshCount);
+                int slotCount = Math.Min(mats.Length, submeshCount);
 
                 for (int s = 0; s < slotCount; s++)
                 {
@@ -142,95 +154,43 @@ namespace FuckRipper.AvatarObfuscator.Internal
             if (textureIslands.Count == 0) return;
 
             // ---------------------------------------------------------------
-            // 4. Pick a deterministic transform per island, with bbox conflict
-            //    resolution per texture. Process islands largest-bbox-first so
-            //    big regions win over small overlapping ones.
+            // 4. Per-mesh, run NFDH packing. Each island either gets a
+            //    Translation + IsPacked, or stays at identity.
             // ---------------------------------------------------------------
-            // First, determine for every island the textures it touches, by
-            // inverting textureIslands.
-            var islandTextures = new Dictionary<UvIsland, List<Texture2D>>();
-            foreach (var kv in textureIslands)
-            {
-                foreach (var mi in kv.Value)
-                {
-                    if (!islandTextures.TryGetValue(mi.Island, out var list))
-                        list = islandTextures[mi.Island] = new List<Texture2D>();
-                    list.Add(kv.Key);
-                }
-            }
-
-            // Flatten and sort all (mesh, island) pairs by area desc, with
-            // explicit tiebreakers on bbox xMin / yMin / mesh id so the order
-            // is deterministic for ties (List.Sort is not stable).
-            var allPairs = new List<MeshIsland>();
             foreach (var kv in meshIslands)
-                foreach (var island in kv.Value)
-                    if (islandTextures.ContainsKey(island))
-                        allPairs.Add(new MeshIsland(kv.Key, island));
-            allPairs.Sort((a, b) =>
-            {
-                int areaCmp = b.Island.Bbox.Area().CompareTo(a.Island.Bbox.Area());
-                if (areaCmp != 0) return areaCmp;
-                int xCmp = a.Island.Bbox.xMin.CompareTo(b.Island.Bbox.xMin);
-                if (xCmp != 0) return xCmp;
-                int yCmp = a.Island.Bbox.yMin.CompareTo(b.Island.Bbox.yMin);
-                if (yCmp != 0) return yCmp;
-                int meshCmp = a.Mesh.GetInstanceID().CompareTo(b.Mesh.GetInstanceID());
-                if (meshCmp != 0) return meshCmp;
-                return a.Island.RootId.CompareTo(b.Island.RootId);
-            });
-
-            // Per-texture occupancy lists (to detect overlapping non-identity
-            // bboxes). An island only gets a transform when its bbox doesn't
-            // overlap any earlier-applied island's bbox in any of its textures.
-            var occupancy = new Dictionary<Texture2D, List<Rect>>();
-            foreach (var pair in allPairs)
-            {
-                var island = pair.Island;
-                if (island.Bbox.Area() < 1e-6f) { island.Transform = IslandTransform.Identity; continue; }
-                if (!islandTextures.TryGetValue(island, out var textures)) continue;
-
-                bool conflict = false;
-                foreach (var tex in textures)
-                {
-                    if (occupancy.TryGetValue(tex, out var rects) && AnyOverlap(island.Bbox, rects))
-                    { conflict = true; break; }
-                }
-
-                if (conflict)
-                {
-                    island.Transform = IslandTransform.Identity;
-                    continue;
-                }
-
-                island.Transform = PickTransform(island.Bbox, pair.Mesh.GetInstanceID(), avatarSeed);
-                if (island.Transform == IslandTransform.Identity) continue;
-                foreach (var tex in textures)
-                {
-                    if (!occupancy.TryGetValue(tex, out var rects))
-                        rects = occupancy[tex] = new List<Rect>();
-                    rects.Add(island.Bbox);
-                }
-            }
+                NFDHPack(kv.Value, PaddingUv);
 
             // ---------------------------------------------------------------
-            // 5. Build the rearranged texture per source Texture2D. A texture
-            //    referenced by N materials produces exactly 1 obfuscated copy.
+            // 4.5. Cross-mesh consistency: a texture can only be painted if
+            //      EVERY island it touches is packed. If even one is
+            //      un-packed, we revert the rest (an island's revert might
+            //      cascade — a fixed-point loop converges).
+            // ---------------------------------------------------------------
+            EnforceCrossMeshConsistency(textureIslands);
+
+            // ---------------------------------------------------------------
+            // 5. Build the rearranged texture per source Texture2D.
+            //    A texture referenced by N materials produces exactly 1 copy.
             // ---------------------------------------------------------------
             var rearrangedCache = new Dictionary<Texture2D, Texture2D>();
             foreach (var kv in textureIslands)
             {
                 var tex = kv.Key;
                 if (tex == null || rearrangedCache.ContainsKey(tex)) continue;
-                if (IsHdrFormat(tex.format)) continue; // HDR: skip safely
+                if (IsHdrFormat(tex.format)) continue;
 
-                // Skip if no island for this texture got a non-identity transform.
-                bool anyTransform = false;
+                bool anyPacked = false;
+                bool anyUnpacked = false;
                 foreach (var mi in kv.Value)
-                    if (mi.Island.Transform != IslandTransform.Identity) { anyTransform = true; break; }
-                if (!anyTransform) continue;
+                {
+                    if (mi.Island.IsPacked) anyPacked = true;
+                    else anyUnpacked = true;
+                }
+                // Cross-mesh consistency above means it's all-or-nothing per
+                // texture, but defend anyway.
+                if (!anyPacked || anyUnpacked) continue;
 
-                var built = BuildRearrangedTexture(context, state, tex, kv.Value);
+                var built = BuildRearrangedTexture(context, tex, kv.Value);
                 if (built == null) continue;
 
                 built.name = state.NameGen != null ? state.NameGen.Next() : tex.name;
@@ -241,10 +201,8 @@ namespace FuckRipper.AvatarObfuscator.Internal
             if (rearrangedCache.Count == 0) return;
 
             // ---------------------------------------------------------------
-            // 6. Clone every material that references at least one
-            //    rearranged texture, swapping its texture references.
-            //    Material UV scale/offset is NOT changed — the rearranged
-            //    texture occupies the same [0,1]² UV space.
+            // 6. Clone every material that references at least one rearranged
+            //    texture. UV scale/offset is NOT changed.
             // ---------------------------------------------------------------
             var matRemap = new Dictionary<Material, Material>();
             foreach (var orig in allMaterials)
@@ -257,9 +215,9 @@ namespace FuckRipper.AvatarObfuscator.Internal
             }
 
             // ---------------------------------------------------------------
-            // 7. Clone every mesh whose island transforms produced a non-
-            //    identity edit, remap UVs (all 4 channels) per island, and
-            //    swap renderer mesh + material slots in lockstep.
+            // 7. Clone every mesh whose island translations produced a non-
+            //    identity edit, remap UV channels 0..3, and swap renderer
+            //    mesh + material slots in lockstep.
             // ---------------------------------------------------------------
             var meshCloneCache = new Dictionary<Mesh, Mesh>();
             foreach (var r in renderers)
@@ -270,7 +228,7 @@ namespace FuckRipper.AvatarObfuscator.Internal
 
                 bool anyEdit = false;
                 foreach (var island in islands)
-                    if (island.Transform != IslandTransform.Identity) { anyEdit = true; break; }
+                    if (island.IsPacked) { anyEdit = true; break; }
 
                 bool anyMatRemap = false;
                 var mats = r.sharedMaterials;
@@ -280,14 +238,12 @@ namespace FuckRipper.AvatarObfuscator.Internal
 
                 if (!anyEdit && !anyMatRemap) continue;
 
-                // Swap material slots first (cheap, mesh-independent).
                 if (anyMatRemap && mats != null)
                 {
-                    var newMats = mats;
-                    for (int s = 0; s < newMats.Length; s++)
-                        if (newMats[s] != null && matRemap.TryGetValue(newMats[s], out var rep))
-                            newMats[s] = rep;
-                    r.sharedMaterials = newMats;
+                    for (int s = 0; s < mats.Length; s++)
+                        if (mats[s] != null && matRemap.TryGetValue(mats[s], out var rep))
+                            mats[s] = rep;
+                    r.sharedMaterials = mats;
                 }
 
                 if (!anyEdit) continue;
@@ -309,27 +265,140 @@ namespace FuckRipper.AvatarObfuscator.Internal
         }
 
         // ====================================================================
-        // Per-island transform picking
+        // NFDH packer (Next-Fit Decreasing Height, no rotation)
         // ====================================================================
 
         /// <summary>
-        /// Pick a deterministic non-identity transform for a UV island. Identity
-        /// is reserved for explicit conflict-fallback by the caller.
+        /// Pack the islands' bboxes (each expanded by <paramref name="padding"/>
+        /// on every side) into [0,1]² using Next-Fit Decreasing Height.
+        /// Either every non-degenerate island ends up with
+        /// <see cref="UvIsland.IsPacked"/>=true and a non-zero
+        /// <see cref="UvIsland.Translation"/>, or — if the islands don't fit —
+        /// every island in the list is left at identity.
         /// </summary>
-        private static IslandTransform PickTransform(Rect bbox, int meshId, int avatarSeed)
+        /// <returns>true iff the packing succeeded for every non-degenerate
+        /// island in the list.</returns>
+        private static bool NFDHPack(List<UvIsland> islands, float padding)
         {
-            uint h = (uint)(avatarSeed ^ meshId);
-            int cx = (int)(bbox.center.x * 65536f);
-            int cy = (int)(bbox.center.y * 65536f);
-            h ^= (uint)cx;
-            h ^= ((uint)cy) << 16;
-            h ^= h << 13; h ^= h >> 17; h ^= h << 5;
-            // 3 non-identity transforms; identity is reserved for fallback.
-            switch (h % 3u)
+            int n = islands.Count;
+            if (n == 0) return true;
+
+            // Reset state from any previous run and skip degenerate islands —
+            // a 0-area island has nothing to translate and should never
+            // affect packing decisions.
+            foreach (var island in islands)
             {
-                case 0: return IslandTransform.FlipH;
-                case 1: return IslandTransform.FlipV;
-                default: return IslandTransform.Rot180;
+                island.IsPacked = false;
+                island.Translation = Vector2.zero;
+            }
+
+            // Filter to non-degenerate. Sort tall first; deterministic
+            // tiebreakers so the packed layout is identical run-to-run.
+            var order = new List<int>(n);
+            for (int i = 0; i < n; i++)
+            {
+                var b = islands[i].Bbox;
+                if (b.width > 1e-5f && b.height > 1e-5f) order.Add(i);
+            }
+            if (order.Count == 0) return true;
+
+            order.Sort((a, b) =>
+            {
+                var ba = islands[a].Bbox;
+                var bb = islands[b].Bbox;
+                int hCmp = bb.height.CompareTo(ba.height);
+                if (hCmp != 0) return hCmp;
+                int wCmp = bb.width.CompareTo(ba.width);
+                if (wCmp != 0) return wCmp;
+                int xCmp = ba.xMin.CompareTo(bb.xMin);
+                if (xCmp != 0) return xCmp;
+                int yCmp = ba.yMin.CompareTo(bb.yMin);
+                if (yCmp != 0) return yCmp;
+                return islands[a].RootId.CompareTo(islands[b].RootId);
+            });
+
+            float curX = 0f, curY = 0f, rowH = 0f;
+            const float container = 1f;
+
+            for (int k = 0; k < order.Count; k++)
+            {
+                int idx = order[k];
+                var b = islands[idx].Bbox;
+                float pw = b.width  + 2f * padding;
+                float ph = b.height + 2f * padding;
+
+                // Single padded island taller than the container = unpackable.
+                if (pw > container || ph > container)
+                {
+                    // Roll back any placements done so far.
+                    foreach (var island in islands) { island.IsPacked = false; island.Translation = Vector2.zero; }
+                    return false;
+                }
+
+                // New row when the current row can't fit the next island.
+                if (curX + pw > container && curX > 0f)
+                {
+                    curY += rowH;
+                    curX = 0f;
+                    rowH = 0f;
+                }
+
+                if (curY + ph > container)
+                {
+                    foreach (var island in islands) { island.IsPacked = false; island.Translation = Vector2.zero; }
+                    return false;
+                }
+
+                // Place padded box at (curX, curY); content top-left lives at
+                // (curX + padding, curY + padding) so the padding band stays
+                // inside the padded box but outside the content rect.
+                var newSrcMin = new Vector2(curX + padding, curY + padding);
+                var oldSrcMin = new Vector2(b.xMin, b.yMin);
+                islands[idx].Translation = newSrcMin - oldSrcMin;
+                islands[idx].IsPacked = true;
+
+                curX += pw;
+                if (ph > rowH) rowH = ph;
+            }
+
+            return true;
+        }
+
+        // ====================================================================
+        // Cross-mesh consistency
+        // ====================================================================
+
+        /// <summary>
+        /// Propagate "any unpacked island in a texture's set ⇒ revert every
+        /// island in that set" until a fixed point. Without this, a
+        /// rearranged texture painted from mesh A's islands while mesh B's
+        /// islands stay at identity would cause mesh B to sample wrong
+        /// pixels at island A's translated positions.
+        /// </summary>
+        private static void EnforceCrossMeshConsistency(
+            Dictionary<Texture2D, List<MeshIsland>> textureIslands)
+        {
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                foreach (var kv in textureIslands)
+                {
+                    bool anyUnpacked = false;
+                    foreach (var mi in kv.Value)
+                        if (!mi.Island.IsPacked) { anyUnpacked = true; break; }
+                    if (!anyUnpacked) continue;
+
+                    foreach (var mi in kv.Value)
+                    {
+                        if (mi.Island.IsPacked)
+                        {
+                            mi.Island.IsPacked = false;
+                            mi.Island.Translation = Vector2.zero;
+                            changed = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -337,13 +406,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
         // Island detection (TTT-style union-find on shared UV positions)
         // ====================================================================
 
-        /// <summary>
-        /// Build UV islands for a mesh's UV0 channel. Two triangles are placed
-        /// in the same island iff they share at least one UV position (matching
-        /// the TTT IslandUtility approach: vertex positions identical in UV
-        /// space are merged first, then triangles unite their merged-vertex
-        /// classes).
-        /// </summary>
         private static List<UvIsland> DetectIslands(Mesh mesh)
         {
             var result = new List<UvIsland>();
@@ -354,9 +416,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
             int vertCount = uvList.Count;
             if (vertCount == 0) return result;
 
-            // Map identical UV positions to a unique key, so two vertices that
-            // share a UV (but have separate vertex indices because of split
-            // normals/tangents) end up in the same union-find group.
             var uvToUnique = new Dictionary<Vector2, int>(vertCount);
             var vertToUnique = new int[vertCount];
             int uniqueCount = 0;
@@ -368,7 +427,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 vertToUnique[i] = u;
             }
 
-            // Union-find on unique UV positions.
             var parent = new int[uniqueCount];
             var rank = new int[uniqueCount];
             for (int i = 0; i < uniqueCount; i++) parent[i] = i;
@@ -387,7 +445,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 if (rank[a] == rank[b]) rank[a]++;
             }
 
-            // Walk every submesh's triangles to merge connected components.
             int subCount = mesh.subMeshCount;
             for (int s = 0; s < subCount; s++)
             {
@@ -397,13 +454,11 @@ namespace FuckRipper.AvatarObfuscator.Internal
                     int v0 = tris[t], v1 = tris[t + 1], v2 = tris[t + 2];
                     if (v0 < 0 || v1 < 0 || v2 < 0) continue;
                     if (v0 >= vertCount || v1 >= vertCount || v2 >= vertCount) continue;
-                    int u0 = vertToUnique[v0], u1 = vertToUnique[v1], u2 = vertToUnique[v2];
-                    Union(u0, u1);
-                    Union(u1, u2);
+                    Union(vertToUnique[v0], vertToUnique[v1]);
+                    Union(vertToUnique[v1], vertToUnique[v2]);
                 }
             }
 
-            // Collect islands — one per representative of the union-find.
             var rootToIsland = new Dictionary<int, UvIsland>();
             for (int i = 0; i < vertCount; i++)
             {
@@ -420,34 +475,20 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 }
                 island.AddVertex(i);
             }
-
             return result;
         }
 
-        /// <summary>
-        /// Find islands that own at least one triangle in <paramref name="submeshIndex"/>
-        /// of <paramref name="mesh"/>. Used to associate a submesh's material
-        /// textures with the correct islands. The vertex → island lookup is
-        /// supplied externally so it can be reused across calls on the same
-        /// mesh (multiple submeshes / multiple renderers sharing the mesh).
-        /// </summary>
         private static HashSet<UvIsland> IslandsTouchingSubmesh(Mesh mesh, int submeshIndex,
             Dictionary<int, UvIsland> vertToIsland)
         {
             var result = new HashSet<UvIsland>();
             var tris = mesh.GetTriangles(submeshIndex);
             for (int t = 0; t + 2 < tris.Length; t += 3)
-            {
                 if (vertToIsland.TryGetValue(tris[t], out var island))
                     result.Add(island);
-            }
             return result;
         }
 
-        /// <summary>
-        /// Build the vertex → island lookup for a mesh. O(vertCount) — cache
-        /// per mesh so multiple submeshes / multiple renderers reuse it.
-        /// </summary>
         private static Dictionary<int, UvIsland> BuildVertToIsland(List<UvIsland> islands)
         {
             var map = new Dictionary<int, UvIsland>();
@@ -458,39 +499,11 @@ namespace FuckRipper.AvatarObfuscator.Internal
         }
 
         // ====================================================================
-        // Rect helpers
+        // Mesh UV remap — translate each packed island's vertices.
         // ====================================================================
 
-        private static bool AnyOverlap(Rect bbox, List<Rect> others)
-        {
-            foreach (var o in others)
-                if (RectOverlaps(bbox, o)) return true;
-            return false;
-        }
-
-        private static bool RectOverlaps(Rect a, Rect b)
-        {
-            // Half-open overlap: rects sharing only an edge are NOT considered
-            // overlapping, so adjacent islands packed tightly can both be
-            // transformed.
-            if (a.xMax <= b.xMin || b.xMax <= a.xMin) return false;
-            if (a.yMax <= b.yMin || b.yMax <= a.yMin) return false;
-            return true;
-        }
-
-        // ====================================================================
-        // Mesh UV remap
-        // ====================================================================
-
-        /// <summary>
-        /// Apply each island's transform to every UV channel (0–3) on
-        /// <paramref name="mesh"/>. UV2 / UV3 are stored as Vector4 by Unity;
-        /// only the xy components are remapped. A vertex not in any island is
-        /// left untouched.
-        /// </summary>
         private static void RemapAllUvChannels(Mesh mesh, List<UvIsland> islands)
         {
-            // Build vertex → (island, transform, bbox) lookup once.
             int vertCount = mesh.vertexCount;
             var perVertIsland = new UvIsland[vertCount];
             foreach (var island in islands)
@@ -508,49 +521,31 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 for (int i = 0; i < n; i++)
                 {
                     var island = perVertIsland[i];
-                    if (island == null || island.Transform == IslandTransform.Identity) continue;
-
+                    if (island == null || !island.IsPacked) continue;
                     var uv = uvs[i];
-                    var p = ApplyUvTransform(new Vector2(uv.x, uv.y), island.Bbox, island.Transform);
-                    uvs[i] = new Vector4(p.x, p.y, uv.z, uv.w);
+                    uvs[i] = new Vector4(uv.x + island.Translation.x,
+                                         uv.y + island.Translation.y,
+                                         uv.z, uv.w);
                     changed = true;
                 }
                 if (changed) mesh.SetUVs(ch, uvs);
             }
         }
 
-        private static Vector2 ApplyUvTransform(Vector2 uv, Rect bbox, IslandTransform t)
-        {
-            switch (t)
-            {
-                case IslandTransform.FlipH:
-                    return new Vector2(bbox.xMin + bbox.xMax - uv.x, uv.y);
-                case IslandTransform.FlipV:
-                    return new Vector2(uv.x, bbox.yMin + bbox.yMax - uv.y);
-                case IslandTransform.Rot180:
-                    return new Vector2(bbox.xMin + bbox.xMax - uv.x,
-                                       bbox.yMin + bbox.yMax - uv.y);
-                default: return uv;
-            }
-        }
-
         // ====================================================================
-        // Texture rearrangement
+        // Texture rearrangement — per-island copy + edge-replicate skirt.
         // ====================================================================
 
-        /// <summary>
-        /// Build a texture whose pixels have been rearranged in lockstep with
-        /// the UV transforms decided per island. The pipeline mirrors the
-        /// previous v0.2.3 path (Blit → ReadPixels → CPU mutation → SetPixels
-        /// → recompress) so it works for every readable / non-readable input.
-        /// </summary>
         private static Texture2D BuildRearrangedTexture(BuildContext context,
-            ObfuscationContext state, Texture2D src, List<MeshIsland> islandPairs)
+            Texture2D src, List<MeshIsland> islandPairs)
         {
             if (src == null) return null;
             int w = src.width;
             int h = src.height;
             if (w <= 0 || h <= 0) return null;
+
+            int padPxX = Mathf.Max(MinPaddingPixels, Mathf.RoundToInt(PaddingUv * w));
+            int padPxY = Mathf.Max(MinPaddingPixels, Mathf.RoundToInt(PaddingUv * h));
 
             bool linear = ResolveLinearFromTexture(src);
             var rwMode = linear ? RenderTextureReadWrite.Linear : RenderTextureReadWrite.sRGB;
@@ -568,22 +563,21 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 cpuSrc.Apply(false);
 
                 var srcPixels = cpuSrc.GetPixels();
-                // Initial: identity copy, so untouched regions retain source.
+                // Identity backing — UVs not in any packed island still
+                // sample correctly; inside-island regions get overwritten
+                // below, with the surrounding skirt's edge-replicate
+                // overwriting any neighbour-island bleed.
                 var dstPixels = (Color[])srcPixels.Clone();
                 Object.DestroyImmediate(cpuSrc);
 
-                // Apply each island's transform to the corresponding pixel
-                // bbox. Distinct islands may map to the same source bbox in
-                // pixel space (rare, and resolved by AnyOverlap conflict logic
-                // upstream — at most one of them is non-identity), so we just
-                // apply them in order.
+                // Apply each packed island in-order. Targets do not overlap
+                // (NFDH guarantees that), so paint order is irrelevant.
                 foreach (var mi in islandPairs)
                 {
                     var island = mi.Island;
-                    if (island.Transform == IslandTransform.Identity) continue;
+                    if (!island.IsPacked) continue;
 
-                    ApplyTexturePixelTransform(srcPixels, dstPixels, w, h,
-                        island.Bbox, island.Transform);
+                    PaintIsland(srcPixels, dstPixels, w, h, island, padPxX, padPxY);
                 }
 
                 output = new Texture2D(w, h, TextureFormat.RGBA32, src.mipmapCount > 1, linear)
@@ -614,47 +608,62 @@ namespace FuckRipper.AvatarObfuscator.Internal
         }
 
         /// <summary>
-        /// Within the texel rectangle that corresponds to <paramref name="bbox"/>,
-        /// rewrite <paramref name="dst"/> from <paramref name="src"/> through
-        /// the chosen transform. The bbox is in [0,1] UV space; we convert
-        /// to pixel coordinates with explicit clamping so off-by-one rounding
-        /// at the bbox edge can't read or write outside the buffer.
+        /// Copy the island's source bbox (and a padding skirt around it,
+        /// filled by clamping each off-bbox sample back to the bbox edge —
+        /// classic edge-replicate dilation) to the island's translated
+        /// target position. The skirt absorbs bilinear / mip filter taps
+        /// that fall outside the strict content rect, so they pull a
+        /// smoothly-extended version of the island's own border colour
+        /// instead of a neighbouring island's pixels.
         /// </summary>
-        private static void ApplyTexturePixelTransform(Color[] src, Color[] dst,
-            int w, int h, Rect bbox, IslandTransform t)
+        private static void PaintIsland(Color[] src, Color[] dst, int w, int h,
+            UvIsland island, int padPxX, int padPxY)
         {
-            int x0 = Mathf.Clamp(Mathf.FloorToInt(bbox.xMin * w), 0, w);
-            int x1 = Mathf.Clamp(Mathf.CeilToInt (bbox.xMax * w), 0, w);
-            int y0 = Mathf.Clamp(Mathf.FloorToInt(bbox.yMin * h), 0, h);
-            int y1 = Mathf.Clamp(Mathf.CeilToInt (bbox.yMax * h), 0, h);
-            if (x1 <= x0 || y1 <= y0) return;
+            // Source pixel rect (inclusive of bbox edges via floor/ceil).
+            int sx0 = Mathf.Clamp(Mathf.FloorToInt(island.Bbox.xMin * w), 0, w - 1);
+            int sy0 = Mathf.Clamp(Mathf.FloorToInt(island.Bbox.yMin * h), 0, h - 1);
+            int sx1 = Mathf.Clamp(Mathf.CeilToInt (island.Bbox.xMax * w), sx0 + 1, w);
+            int sy1 = Mathf.Clamp(Mathf.CeilToInt (island.Bbox.yMax * h), sy0 + 1, h);
+            int sw = sx1 - sx0;
+            int sh = sy1 - sy0;
+            if (sw <= 0 || sh <= 0) return;
 
-            // For each transform, map dst[x, y] ← src[mirrored_x, mirrored_y]
-            // within the rectangle. Only one of the two coords flips per axis
-            // for FlipH / FlipV; both flip for Rot180.
-            int xFlipBase = x0 + x1 - 1;
-            int yFlipBase = y0 + y1 - 1;
-            for (int y = y0; y < y1; y++)
+            // Target pixel position (top-left of content). Translation is in
+            // UV space so multiply by texture size.
+            int dx0 = Mathf.RoundToInt((island.Bbox.xMin + island.Translation.x) * w);
+            int dy0 = Mathf.RoundToInt((island.Bbox.yMin + island.Translation.y) * h);
+
+            // Iterate the padded target rect; for each target pixel, sample
+            // the source at (sx0 + clamped_dx, sy0 + clamped_dy). Inside
+            // the content rect this is a 1-to-1 copy; outside it's the
+            // edge-replicate skirt.
+            int yStart = -padPxY;
+            int yEnd   = sh + padPxY;
+            int xStart = -padPxX;
+            int xEnd   = sw + padPxX;
+
+            for (int dy = yStart; dy < yEnd; dy++)
             {
-                int dstRow = y * w;
-                for (int x = x0; x < x1; x++)
+                int targetY = dy0 + dy;
+                if (targetY < 0 || targetY >= h) continue;
+
+                int srcY = sy0 + Mathf.Clamp(dy, 0, sh - 1);
+                int dstRowStart = targetY * w;
+                int srcRowStart = srcY * w;
+
+                for (int dx = xStart; dx < xEnd; dx++)
                 {
-                    int sx, sy;
-                    switch (t)
-                    {
-                        case IslandTransform.FlipH: sx = xFlipBase - x; sy = y; break;
-                        case IslandTransform.FlipV: sx = x; sy = yFlipBase - y; break;
-                        case IslandTransform.Rot180: sx = xFlipBase - x; sy = yFlipBase - y; break;
-                        default: continue;
-                    }
-                    int srcRow = sy * w;
-                    dst[dstRow + x] = src[srcRow + sx];
+                    int targetX = dx0 + dx;
+                    if (targetX < 0 || targetX >= w) continue;
+
+                    int srcX = sx0 + Mathf.Clamp(dx, 0, sw - 1);
+                    dst[dstRowStart + targetX] = src[srcRowStart + srcX];
                 }
             }
         }
 
         // ====================================================================
-        // Material build (unchanged from v0.2.3)
+        // Material build (unchanged from v0.2.4)
         // ====================================================================
 
         private static void EnumerateMaterialTextures(Material mat, HashSet<Texture2D> sink)
@@ -675,8 +684,6 @@ namespace FuckRipper.AvatarObfuscator.Internal
         {
             if (src == null || src.shader == null) return null;
 
-            // Skip cloning entirely if the source has no rearranged texture
-            // referenced — saves an asset and avoids needless duplication.
             int propCount = src.shader.GetPropertyCount();
             bool anyChange = false;
             for (int p = 0; p < propCount; p++)
@@ -711,7 +718,7 @@ namespace FuckRipper.AvatarObfuscator.Internal
         }
 
         // ====================================================================
-        // Mesh helpers (unchanged from v0.2.3)
+        // Mesh helpers
         // ====================================================================
 
         private static Mesh GetSharedMesh(Renderer r)
@@ -728,7 +735,7 @@ namespace FuckRipper.AvatarObfuscator.Internal
         }
 
         // ====================================================================
-        // Texture format helpers (carried over from v0.2.3 unchanged)
+        // Texture format helpers (carried over)
         // ====================================================================
 
         private static bool IsHdrFormat(TextureFormat fmt)
@@ -839,15 +846,19 @@ namespace FuckRipper.AvatarObfuscator.Internal
 
         /// <summary>
         /// One UV island: a connected component of triangles whose UV0 vertices
-        /// are linked through shared positions. Carries a UV bounding rect, a
-        /// sorted list of vertex indices and the chosen within-bbox transform.
+        /// share UV positions through the union-find. Carries a UV bounding
+        /// rect, the list of contributing vertex indices, and (after NFDH)
+        /// the per-island UV translation.
         /// </summary>
         internal sealed class UvIsland
         {
             public readonly int RootId;
             public Rect Bbox;
             public readonly List<int> VertIndices = new List<int>();
-            public IslandTransform Transform = IslandTransform.Identity;
+            /// <summary>UV-space delta — newUV = oldUV + Translation.</summary>
+            public Vector2 Translation;
+            /// <summary>True iff NFDH placed this island; UV / texture rewrites are gated on this.</summary>
+            public bool IsPacked;
 
             public UvIsland(int root, Vector2 firstUv)
             {
@@ -867,27 +878,13 @@ namespace FuckRipper.AvatarObfuscator.Internal
             public void AddVertex(int v) { VertIndices.Add(v); }
         }
 
-        /// <summary>Pair of (mesh, island) — used to associate a texture with the islands that sample it.</summary>
+        /// <summary>(mesh, island) pair — used to associate textures with the islands sampling them.</summary>
         internal readonly struct MeshIsland
         {
             public readonly Mesh Mesh;
             public readonly UvIsland Island;
             public MeshIsland(Mesh mesh, UvIsland island) { Mesh = mesh; Island = island; }
         }
-
-        /// <summary>One of four within-bbox involutions an island can take.</summary>
-        internal enum IslandTransform
-        {
-            Identity = 0,
-            FlipH    = 1,
-            FlipV    = 2,
-            Rot180   = 3,
-        }
-    }
-
-    internal static class RectExtensionsForRemap
-    {
-        public static float Area(this Rect r) => Mathf.Max(0, r.width) * Mathf.Max(0, r.height);
     }
 
     /// <summary>
