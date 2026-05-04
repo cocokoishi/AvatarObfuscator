@@ -628,10 +628,17 @@ namespace FuckRipper.AvatarObfuscator.Internal
             int sh = sy1 - sy0;
             if (sw <= 0 || sh <= 0) return;
 
-            // Target pixel position (top-left of content). Translation is in
-            // UV space so multiply by texture size.
-            int dx0 = Mathf.RoundToInt((island.Bbox.xMin + island.Translation.x) * w);
-            int dy0 = Mathf.RoundToInt((island.Bbox.yMin + island.Translation.y) * h);
+            // Target pixel position (top-left of content). Must equal
+            // sx0/sy0 + round(Translation*texSize) so that the per-pixel
+            // offset we apply to the painted rect matches the per-pixel
+            // offset the GPU applies when sampling with the translated UVs
+            // (uv += Translation). Computing round((Bbox.min + Translation) *
+            // size) instead would disagree with floor(Bbox.min * size) by up
+            // to one pixel whenever Bbox.min*size has a fractional part >=
+            // 0.5, producing a 1-pixel shift between the painted island and
+            // its sampling UVs — visible as garbled texture content.
+            int dx0 = sx0 + Mathf.RoundToInt(island.Translation.x * w);
+            int dy0 = sy0 + Mathf.RoundToInt(island.Translation.y * h);
 
             // Iterate the padded target rect; for each target pixel, sample
             // the source at (sx0 + clamped_dx, sy0 + clamped_dy). Inside
@@ -694,9 +701,23 @@ namespace FuckRipper.AvatarObfuscator.Internal
             }
             if (!anyChange) return null;
 
+            // Use UnityEngine.Object.Instantiate (TTT's AtlasTexture pattern)
+            // rather than `new Material(src)` (AAO's DupliacteAssets pattern).
+            // The copy constructor only propagates the shader property table
+            // + shader keywords + render queue; serialization-cloning via
+            // Instantiate also preserves globalIlluminationFlags,
+            // enableInstancing, doubleSidedGI, Material Variant resolved
+            // state, and anything else shaders like lilToon / Poiyomi stash
+            // outside the main property table. Without this we saw the
+            // cloned material render with visibly different shader params
+            // despite having the same shader + textures.
+            //
+            // We still wrap in BeginNoApplyMaterialPropertyDrawers so lilToon
+            // / Poiyomi custom-drawer SetShader hooks don't re-run and
+            // silently retune keywords / queues during the clone.
             Material copy;
             using (MaterialEditorReflection.BeginNoApplyMaterialPropertyDrawers())
-                copy = new Material(src);
+                copy = Object.Instantiate(src);
 #if UNITY_2022_1_OR_NEWER
             copy.parent = null;
 #endif
@@ -890,7 +911,8 @@ namespace FuckRipper.AvatarObfuscator.Internal
     /// <summary>
     /// Reflection helper for <c>EditorMaterialUtility.disableApplyMaterialPropertyDrawers</c>.
     /// Mirrors AAO's DupliacteAssets pass — prevents lilToon / Poiyomi custom-drawer
-    /// side effects from firing during <c>new Material(src)</c>.
+    /// side effects from firing during material cloning (both <c>new Material(src)</c>
+    /// and <c>Object.Instantiate(src)</c> paths).
     /// </summary>
     internal static class MaterialEditorReflection
     {
