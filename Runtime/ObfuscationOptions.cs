@@ -55,15 +55,19 @@ namespace FuckRipper.AvatarObfuscator
         public bool obfuscateAnimationClipNames = true;
 
         [Header("Texture")]
-        [Tooltip("For every Texture2D on every material, generate a byte-different copy that is " +
-                 "visually identical to the source (a single sub-pixel LSB perturbation, far below " +
-                 "human discrimination threshold). The output is recompressed back to the source's " +
+        [Tooltip("For every Texture2D on every material, generate a byte-different copy by " +
+                 "rearranging UV islands in lockstep on both the texture pixels and the mesh UVs " +
+                 "(same principle as TexTransTool's atlas: even a one-texture atlas group repacks " +
+                 "the islands at build time). The output is recompressed back to the source's " +
                  "compressed format (BC7 / DXT5 / ASTC / ETC2 / etc.) so runtime VRAM and bundle " +
                  "size stay the same as the original.\n\n" +
-                 "Mesh UVs and material per-texture scale/offset (_TextureName_ST) are NEVER modified " +
-                 "— only the texture pixel bytes change. Any number of UV channels, arbitrary tiling, " +
-                 "normal maps, detail / matcap masks and parallax effects all keep working unchanged. " +
-                 "Cubemaps, 3D textures and render textures are skipped.")]
+                 "Each island gets a deterministic within-bbox transform (FlipH / FlipV / Rot180), " +
+                 "applied to both the island's UVs and the corresponding pixel rect. The visual " +
+                 "result is unchanged, but every byte of every texture differs from the source — " +
+                 "no ripper reverse-image-search (SHA, perceptual-hash) can match the originals.\n\n" +
+                 "Material per-texture scale/offset (_TextureName_ST) values are kept identical to " +
+                 "the source. UV channels 0–3 are remapped in lockstep. Cubemaps, 3D textures, " +
+                 "render textures and HDR formats are passed through unmodified.")]
         public bool remapUvTextures = true;
 
         [Header("Mesh Merge (Optional)")]

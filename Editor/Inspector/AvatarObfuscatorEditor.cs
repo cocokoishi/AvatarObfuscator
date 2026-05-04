@@ -110,14 +110,17 @@ namespace FuckRipper.AvatarObfuscator.Inspector
                 EditorGUILayout.Space();
                 Section("Texture");
                 RightAlignedToggle(_remapUv, "Obfuscate Textures",
-                    "For every Texture2D on every material, generate a byte-different copy that is " +
-                    "visually identical to the source (a single sub-pixel LSB perturbation, far " +
-                    "below human discrimination threshold). The output is recompressed back to the " +
-                    "source's compressed format (BC7 / DXT5 / ASTC / ETC2 / etc.) so runtime VRAM " +
-                    "and bundle size match the original.\n\n" +
+                    "For every Texture2D on every material, generate a byte-different copy by " +
+                    "rearranging UV islands in lockstep on both the texture pixels and the " +
+                    "mesh UVs — the same principle as TexTransTool's atlas (even a one-texture " +
+                    "atlas group still repacks islands). Each island gets a deterministic " +
+                    "within-bbox FlipH / FlipV / Rot180 transform. The output is recompressed " +
+                    "back to the source's compressed format (BC7 / DXT5 / ASTC / ETC2 / etc.) " +
+                    "so runtime VRAM and bundle size match the original.\n\n" +
                     "A ripper extracting your avatar can no longer match its textures against " +
-                    "asset-store originals by content hash. Mesh UVs and material scale/offset " +
-                    "values are not touched. Cubemaps, 3D textures and render textures are skipped.");
+                    "asset-store originals by content hash. Material per-texture scale/offset " +
+                    "values are not touched. Cubemaps, 3D textures, render textures and HDR " +
+                    "formats are skipped.");
 
                 EditorGUILayout.Space();
                 Section("Mesh Merge (Optional)");

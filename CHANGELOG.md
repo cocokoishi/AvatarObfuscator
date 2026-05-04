@@ -2,6 +2,68 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.5] - 2026-05-04
+
+### Added
+- Per-material texture obfuscation via UV-island-accurate tile rearrangement (removes texture tearing from v0.2.3 uniform grid permute).
+
+## [0.2.4] - 2026-05-04
+
+### Fixed
+- **Critical: triangle tearing under v0.2.3's uniform N×N grid permutation.**
+  The previous pipeline split every texture into a 2×2…6×6 tile grid and
+  permuted tiles independently, then remapped each mesh-UV vertex through
+  the per-vertex tile lookup. Whenever a triangle's three UV vertices fell
+  into different source tiles — extremely common on real avatar UV unwraps —
+  the three vertices were sent to three different destination tiles, and
+  the GPU's linear interpolation across the triangle then sampled disjoint
+  regions of the shuffled texture. Visual result: scrambled / torn faces
+  on most textures, despite the changelog claim of pixel-identical output.
+
+  The fix is a per-UV-island transform, modelled on TexTransTool's
+  `AtlasTexture` (even a "single-texture atlas group" repacks the islands
+  at build time, which is the same rearrangement effect we want):
+  - Per mesh, UV0 islands are detected via union-find — vertices sharing
+    a UV position are merged first, then triangles unite their merged
+    classes (same approach as TTT's `IslandUtility.UVtoIsland`).
+  - Each island gets a deterministic within-bbox involution (FlipH /
+    FlipV / Rot180), seeded from the island's bbox center, mesh
+    instance ID and avatar instance ID. By construction every triangle's
+    three vertices are in the same island, so all three pick up the same
+    transform and the triangle moves as a unit — no tearing.
+  - Texture pixels are rearranged in lockstep: each non-identity island's
+    UV bbox is mapped to a pixel rectangle and that rectangle's pixels
+    are flipped/rotated in place. A texture shared by N materials still
+    produces exactly 1 obfuscated copy.
+  - Conflicts (two islands whose UV bboxes overlap in the same texture)
+    are resolved largest-island-first: the smaller / later island falls
+    back to identity rather than corrupting the larger island's pixels.
+  - Mesh UV channels 0–3 are all remapped through the same per-island
+    transform (matches v0.2.3 behaviour for shaders that sample non-UV0
+    detail/matcap masks with the same UV layout).
+  - Sort tiebreak is fully deterministic (bbox xMin / yMin / mesh
+    instance ID / island root id) so the same avatar produces the same
+    obfuscated output run after run inside a session.
+
+### Changed
+- Inspector tooltip and `ObfuscationOptions.remapUvTextures` summary
+  rewritten to describe the per-island rearrangement instead of the
+  long-removed LSB jitter wording (the tooltips had been stale since
+  v0.2.2; they were never updated for v0.2.3 and were doubly wrong).
+
+### Known limitations (carried over from v0.2.3 — not regressions)
+- Bilinear filtering at island bbox edges can fetch pixels from the
+  adjacent island's transformed region. Most well-unwrapped avatars
+  have atlas padding that absorbs this; in tightly packed atlases
+  there may be a 1-pixel seam at the highest mip level.
+- UV1 / UV2 / UV3 channels are remapped through the SAME per-island
+  transform as UV0. Shaders that sample detail / matcap / lightmap
+  textures via UV1+ with a layout DIFFERENT from UV0 will render
+  those auxiliary maps with the wrong content. (Affects extremely
+  few VRChat avatars in practice.)
+- HDR texture formats (BC6H, RGBAFloat, ASTC HDR, …) are skipped
+  rather than rearranged.
+
 ## [0.2.3] - 2026-05-04
 
 ### Changed
