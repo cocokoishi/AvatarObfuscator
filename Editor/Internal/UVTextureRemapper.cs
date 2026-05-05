@@ -114,6 +114,12 @@ namespace FuckRipper.AvatarObfuscator.Internal
             var textureIslands = new Dictionary<Texture2D, List<MeshIsland>>();
             var seen = new HashSet<(Texture2D, Mesh, UvIsland)>();
             var vertToIslandCache = new Dictionary<Mesh, Dictionary<int, UvIsland>>();
+            // Textures observed with a non-identity per-material _ST anywhere
+            // on the avatar — these get skipped because our UV-translation
+            // shift (Translation) and the GPU's sample shift (Translation *
+            // Scale) disagree whenever Scale != 1 / Offset != 0. See
+            // EnumerateMaterialTextures for the full reasoning.
+            var nonIdentityStTextures = new HashSet<Texture2D>();
             foreach (var r in renderers)
             {
                 if (r == null) continue;
@@ -136,7 +142,7 @@ namespace FuckRipper.AvatarObfuscator.Internal
                     if (islandsInSubmesh.Count == 0) continue;
 
                     var matTextures = new HashSet<Texture2D>();
-                    EnumerateMaterialTextures(mat, matTextures);
+                    EnumerateMaterialTextures(mat, matTextures, nonIdentityStTextures);
 
                     foreach (var tex in matTextures)
                     {
@@ -151,6 +157,12 @@ namespace FuckRipper.AvatarObfuscator.Internal
                     }
                 }
             }
+            // Remove any texture that had a non-identity _ST in ANY material
+            // — we can't obfuscate it safely. A single-material avatar with
+            // non-default tiling on _MainTex would otherwise produce the
+            // exact scrambled-texture symptom we're fixing.
+            if (nonIdentityStTextures.Count > 0)
+                foreach (var tex in nonIdentityStTextures) textureIslands.Remove(tex);
             if (textureIslands.Count == 0) return;
 
             // ---------------------------------------------------------------
@@ -369,15 +381,54 @@ namespace FuckRipper.AvatarObfuscator.Internal
         // ====================================================================
 
         /// <summary>
-        /// Propagate "any unpacked island in a texture's set ⇒ revert every
-        /// island in that set" until a fixed point. Without this, a
-        /// rearranged texture painted from mesh A's islands while mesh B's
-        /// islands stay at identity would cause mesh B to sample wrong
-        /// pixels at island A's translated positions.
+        /// Cross-mesh consistency enforcement. There are two failure modes:
+        ///
+        /// <para>1. Mixed pack state: one mesh's islands packed, another's
+        /// unpacked. The rearranged texture gets painted from the packed
+        /// mesh's layout, but the unpacked mesh still samples at original
+        /// UVs → wrong content.</para>
+        ///
+        /// <para>2. Independent-NFDH target collision: both meshes packed,
+        /// but each mesh's NFDH ran independently, so two different islands
+        /// (one per mesh) can be assigned to overlapping target rects in
+        /// [0,1]². Painting the single shared texture then overwrites one
+        /// mesh's content with the other's; that mesh samples garbage.</para>
+        ///
+        /// <para>Both modes are a correctness bug for the texture — the
+        /// cheapest safe fix is to revert EVERY island of any shared
+        /// texture (touched by &gt; 1 distinct Mesh) to identity, then
+        /// propagate the revert via the original mixed-state loop until a
+        /// fixed point.</para>
         /// </summary>
         private static void EnforceCrossMeshConsistency(
             Dictionary<Texture2D, List<MeshIsland>> textureIslands)
         {
+            // Pass 1: any texture referenced by islands from ≥ 2 distinct
+            // meshes → revert every island of that texture to identity.
+            // NFDH is per-mesh, so independent layouts in shared textures
+            // can collide in target space and overwrite each other.
+            foreach (var kv in textureIslands)
+            {
+                Mesh firstMesh = null;
+                bool multiMesh = false;
+                foreach (var mi in kv.Value)
+                {
+                    if (firstMesh == null) firstMesh = mi.Mesh;
+                    else if (mi.Mesh != firstMesh) { multiMesh = true; break; }
+                }
+                if (!multiMesh) continue;
+                foreach (var mi in kv.Value)
+                {
+                    mi.Island.IsPacked = false;
+                    mi.Island.Translation = Vector2.zero;
+                }
+            }
+
+            // Pass 2: fixed-point propagation of the mixed-pack-state
+            // invariant (any unpacked island in a texture's set ⇒ revert
+            // every island in that set). Pass 1 may have created new
+            // unpacked islands that cascade through other textures of the
+            // same mesh.
             bool changed = true;
             while (changed)
             {
@@ -510,11 +561,17 @@ namespace FuckRipper.AvatarObfuscator.Internal
                 foreach (var v in island.VertIndices)
                     if (v >= 0 && v < vertCount) perVertIsland[v] = island;
 
-            for (int ch = 0; ch < 4; ch++)
+            // Only translate UV0. UV1/UV2/UV3 usually carry a DIFFERENT
+            // layout (lightmap UVs, detail masks, AudioLink UVs, matcap
+            // masks) — islands are detected on UV0, so applying UV0's
+            // per-island delta to UV1+ vertices would scramble anything
+            // sampled via those channels. Matches TTT's AtlasTexture, which
+            // also only rewrites UV0 (see AtlasTexture.cs:301).
             {
+                int ch = 0;
                 var uvs = new List<Vector4>();
                 mesh.GetUVs(ch, uvs);
-                if (uvs.Count == 0) continue;
+                if (uvs.Count == 0) return;
 
                 int n = Math.Min(uvs.Count, vertCount);
                 bool changed = false;
@@ -673,16 +730,40 @@ namespace FuckRipper.AvatarObfuscator.Internal
         // Material build (unchanged from v0.2.4)
         // ====================================================================
 
-        private static void EnumerateMaterialTextures(Material mat, HashSet<Texture2D> sink)
+        private static void EnumerateMaterialTextures(Material mat, HashSet<Texture2D> sink,
+            HashSet<Texture2D> nonIdentityStSink)
         {
             if (mat == null || mat.shader == null) return;
             int propCount = mat.shader.GetPropertyCount();
             for (int p = 0; p < propCount; p++)
             {
                 if (mat.shader.GetPropertyType(p) != ShaderPropertyType.Texture) continue;
-                var t = mat.GetTexture(mat.shader.GetPropertyName(p));
-                if (t is Texture2D t2d && !IsHdrFormat(t2d.format))
-                    sink.Add(t2d);
+                var propName = mat.shader.GetPropertyName(p);
+                var t = mat.GetTexture(propName);
+                if (!(t is Texture2D t2d) || IsHdrFormat(t2d.format)) continue;
+
+                // Skip textures whose per-material _ST is non-identity. The
+                // GPU samples at sampleUV = UV * Scale + Offset. Our pass
+                // shifts mesh UVs by Translation, which shifts the sample
+                // position by Translation * Scale — but we paint the
+                // rearranged texture shifted by Translation alone. When
+                // Scale != 1 or Offset != 0 those two shifts disagree and
+                // the mesh samples the WRONG part of the rearranged texture
+                // (scrambled content on surface). Leaving such textures
+                // unrearranged keeps them identical pixels and identical
+                // UVs — correct render, no obfuscation for that texture.
+                // Any material referencing the texture with non-identity ST
+                // poisons the texture for all materials.
+                var scale  = mat.GetTextureScale(propName);
+                var offset = mat.GetTextureOffset(propName);
+                if (!Mathf.Approximately(scale.x, 1f)  || !Mathf.Approximately(scale.y, 1f) ||
+                    !Mathf.Approximately(offset.x, 0f) || !Mathf.Approximately(offset.y, 0f))
+                {
+                    nonIdentityStSink?.Add(t2d);
+                    continue;
+                }
+
+                sink.Add(t2d);
             }
         }
 

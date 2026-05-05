@@ -2,6 +2,56 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.7] - 2026-05-05
+
+### Fixed
+- **Critical: scrambled textures on the rendered avatar after the v0.2.6
+  rearrangement pass.** Three independent bugs in `UVTextureRemapper`
+  were producing 1-pixel offsets, mismatched sample-vs-content shifts,
+  and shared-texture target collisions — all visible as garbled texture
+  content on the mesh while the painted rearranged-texture file looked
+  correct on its own.
+  - **Pixel rounding mismatch in `PaintIsland`.** The destination origin
+    was computed as `round((Bbox.min + Translation) * size)` while the
+    source rect used `floor(Bbox.min * size)`. The two rounding modes
+    disagree by 1 px whenever `Bbox.min * size` has a fractional part
+    `≥ 0.5`. Fixed: `dx0 = sx0 + round(Translation * size)`, so the
+    painted rect's per-pixel offset matches exactly the per-pixel offset
+    the GPU applies when sampling with `uv += Translation`.
+  - **`_TextureName_ST` mismatch.** Mesh UVs shifted by `T`, but the GPU
+    samples at `(UV + T) * Scale + Offset` — sample-position shift is
+    `T * Scale`, not `T`. Detail maps, scrolling textures, lilToon
+    `_MainTex_ST != (1,1,0,0)`, and any tiled-or-offset material would
+    sample the wrong part of the rearranged texture. Textures with a
+    non-identity `_ST` in any referencing material now skip the
+    rearrangement (kept identical pixels, identical sampling, no
+    obfuscation for that texture).
+  - **Cross-mesh NFDH target collision.** NFDH runs per mesh, so two
+    different meshes sharing a texture can independently assign their
+    islands to overlapping target rects in `[0,1]²`. Painting the single
+    shared rearranged texture would then overwrite one mesh's content
+    with the other's. Fixed: any texture touched by islands from `≥ 2`
+    distinct meshes reverts to identity for all its islands; the
+    pre-existing mixed-pack-state propagation loop runs after that
+    revert to maintain the cross-mesh invariant.
+  - **UV1 / UV2 / UV3 scramble.** Previous code applied UV0-derived
+    per-island translations to all four UV channels. UV1+ commonly
+    carries an unrelated layout (lightmap UVs, detail masks, AudioLink
+    UVs, matcap masks); applying UV0's island deltas to those channels
+    produced nonsense sample positions. Fixed: only UV0 is rewritten,
+    matching TTT's `AtlasTexture` (`AtlasTexture.cs:301`).
+  - **Material clone path switched to `Object.Instantiate(src)`.**
+    `new Material(src)` (AAO's DupliacteAssets pattern) only carries
+    forward the main shader property table + keywords + render queue.
+    `Object.Instantiate` does a serialization deep-clone that also
+    preserves `globalIlluminationFlags`, `enableInstancing`,
+    `doubleSidedGI`, Material Variant resolved values, and the extra
+    serialized fields lilToon / Poiyomi stash outside the property
+    table. The clone is still wrapped in
+    `BeginNoApplyMaterialPropertyDrawers` so custom drawers can't
+    re-tune keywords during the clone. Matches TTT's
+    `AtlasTexture.GenerateAtlasMat` (`AtlasTexture.cs:920`).
+
 ## [0.2.6] - 2026-05-04
 
 ### Fixed
