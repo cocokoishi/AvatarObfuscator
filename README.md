@@ -120,7 +120,6 @@ component fully reverts the build because the originals were never changed.
 
 **If it doesn't work:** run Modular Avatar's manual bake first, then attach
 this component. This resolves issues in almost all cases.  
-**Facetracking:** Currently may not supported.
 
 ---
 
