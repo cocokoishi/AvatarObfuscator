@@ -58,7 +58,7 @@ version is recommended. Older versions contain mysterious bugs.
 - **All GameObject names**, everywhere under the avatar root.
 - **All animator controllers**, their internal parameters, and the
   corresponding VRC Parameters.
-- **All asset file names** — meshes, animation clips, and more.
+- **Some asset file names** — meshes, animation clips, and more.
 
 ## What we do NOT obfuscate
 
