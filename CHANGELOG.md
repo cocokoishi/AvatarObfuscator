@@ -2,7 +2,7 @@
 
 All notable changes to this package will be documented in this file.
 
-## [3.0.0] - 2026-05-05
+## [0.3.0] - 2026-05-05
 
 **First stable release.**
 
