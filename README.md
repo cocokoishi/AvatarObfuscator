@@ -43,10 +43,11 @@ version is recommended. Older versions contain mysterious bugs.
 ## Quick start
 
 1. Select the avatar root (the GameObject with `VRCAvatarDescriptor`).
-2. **Add Component → Search: Avatar Obfuscator**.
-3. Default settings are already good. For MMD avatars, make sure
-   **Preserve MMD...** options are ticked.
-4. **Build & Publish**. NDMF handles everything at build time on a clone.
+2. Use MA Manual Bake! (Optional but recommended to prevent errors).
+3. Add Component → Search: Avatar Obfuscator.
+4. Default settings are already good. For MMD avatars, make sure
+   Preserve MMD... options are ticked.
+5. Build & Publish. NDMF handles everything at build time on a clone.
    Your scene original is never modified.
 <img width="1031" height="834" alt="image" src="https://github.com/user-attachments/assets/f93bc314-91ec-4847-be31-3ea0f5632358" />
 
