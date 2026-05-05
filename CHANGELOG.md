@@ -2,6 +2,18 @@
 
 All notable changes to this package will be documented in this file.
 
+## [3.0.0] - 2026-05-05
+
+**First stable release.**
+
+### Changed
+- **Namespace renamed:** `FuckRipper` → `HateRipper` across all source files.
+- **Texture obfuscation removed.** The built-in `Obfuscate Textures` feature
+  is disabled and marked as not working. Use TexTransTool to atlas textures
+  instead — it does this better.
+- **README rewritten** with clear usage instructions, what is/isn't
+  obfuscated, and a disclaimer.
+
 ## [0.2.9] - 2026-05-05
 
 ### Changed
