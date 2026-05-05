@@ -4,6 +4,7 @@
 > human-readable name on your avatar with a soup of homoglyph characters so
 > rippers cannot make sense of your assets — without ever touching your
 > scene originals.
+<img width="1498" height="811" alt="image" src="https://github.com/user-attachments/assets/7eec38c3-95a6-4f9b-9986-58cbb6c7e1e3" />
 
 [![Unity](https://img.shields.io/badge/Unity-2022.3-black.svg?logo=unity)](https://unity.com/)
 [![NDMF](https://img.shields.io/badge/NDMF-%5E1.6.0-blue.svg)](https://github.com/bdunderscore/ndmf)
@@ -47,6 +48,7 @@ version is recommended. Older versions contain mysterious bugs.
    **Preserve MMD...** options are ticked.
 4. **Build & Publish**. NDMF handles everything at build time on a clone.
    Your scene original is never modified.
+<img width="1031" height="834" alt="image" src="https://github.com/user-attachments/assets/f93bc314-91ec-4847-be31-3ea0f5632358" />
 
 ---
 
@@ -120,7 +122,7 @@ Do not use this tool on models sold through Chinese second-hand marketplaces
 terms of use. The author of this plugin assumes no responsibility for any
 loss caused by using this plugin.
 
-If you are concerned about reliability, back up your project before use.
+If you are concerned about reliability, back up your project before use. Made 99% with DeepseekV4Pro(Max)+CC
 
 ---
 
