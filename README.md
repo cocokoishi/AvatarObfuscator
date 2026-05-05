@@ -30,8 +30,8 @@ that VRChat itself uses internally.
 **Download the latest `.unitypackage` from
 [Releases](https://github.com/cocokoishi/AvatarObfuscator/releases).**
 
-The current version is **v3.0.0** — the first stable release. Only this
-version is recommended. Older versions contain mysterious bugs.
+The current version is **v0.3.1**. Only this version is recommended.
+Older versions contain mysterious bugs.
 
 1. Drag the `.unitypackage` into your Unity project. It lands in
    `Assets/dev.cocokoishi.avatar-obfuscator/`.
@@ -66,6 +66,21 @@ version is recommended. Older versions contain mysterious bugs.
 - Textures, shaders, and everything else not listed above.
 - VRChat reserved parameters.
 - The head mesh and its blendshapes (needed by MMD worlds).
+- **Parameters whose name contains a user-configured substring.** The
+  inspector exposes a comma-separated list (default: `FT,eye`) so any
+  parameter referenced by an external system — face-tracking bridges, OSC
+  tools, custom shaders that read parameter names as strings — stays
+  plaintext. Edit the field on the component to add or remove substrings.
+
+---
+
+## Reproducible builds
+
+By default the obfuscator uses a fixed seed (`5145514`), so two builds of
+the same avatar produce **identical** obfuscated names. This is the right
+default for source-control review and for pipelines that cache name
+mappings. Set the seed to `0` in the Advanced section to get a fresh
+random salt every build instead.
 
 ---
 

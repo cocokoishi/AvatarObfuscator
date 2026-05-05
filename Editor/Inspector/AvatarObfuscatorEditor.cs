@@ -10,6 +10,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _enabled;
         private SerializedProperty _params;
         private SerializedProperty _expParams;
+        private SerializedProperty _skipParams;
         private SerializedProperty _blendShapes;
         private SerializedProperty _preserveMmd;
         private SerializedProperty _hierarchy;
@@ -30,6 +31,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             _enabled         = _options.FindPropertyRelative(nameof(ObfuscationOptions.enabled));
             _params          = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateParameters));
             _expParams       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateExpressionParameters));
+            _skipParams      = _options.FindPropertyRelative(nameof(ObfuscationOptions.skipParametersContaining));
             _blendShapes     = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateBlendShapes));
             _preserveMmd     = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBlendShapes));
             _hierarchy       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateHierarchy));
@@ -73,6 +75,11 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "Rename the parameter entries in the VRC Expression Parameters list and rewrite " +
                         "the parameter references inside the Expression Menu. The user-visible labels in " +
                         "the menu are kept — only the parameter names they reference are renamed.");
+                    EditorGUILayout.PropertyField(_skipParams, new GUIContent("Skip Parameters Containing",
+                        "Comma-separated substrings (case-sensitive). Parameter names that CONTAIN any of " +
+                        "these stay plaintext, in addition to VRChat built-ins. Use this for face-tracking " +
+                        "bridges, OSC tools, custom shaders, etc. that read parameter names as strings.\n\n" +
+                        "Default: 'FT,eye'."));
                     EditorGUI.indentLevel--;
                 }
 

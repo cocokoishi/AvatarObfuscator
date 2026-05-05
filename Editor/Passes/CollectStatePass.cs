@@ -33,6 +33,7 @@ namespace HateRipper.AvatarObfuscator.Passes
                 enabled = src.enabled,
                 obfuscateParameters = src.obfuscateParameters,
                 obfuscateExpressionParameters = src.obfuscateExpressionParameters,
+                skipParametersContaining = src.skipParametersContaining,
                 obfuscateBlendShapes = src.obfuscateBlendShapes,
                 preserveMmdBlendShapes = src.preserveMmdBlendShapes,
                 obfuscateHierarchy = src.obfuscateHierarchy,

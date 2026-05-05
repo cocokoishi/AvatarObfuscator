@@ -66,6 +66,41 @@ namespace HateRipper.AvatarObfuscator.Internal
         // ------------------------------------------------------------------
         // Helpers
         // ------------------------------------------------------------------
+        // Cached parsed form of Options.skipParametersContaining. Lazily built on
+        // first call to ShouldSkipParameter so callers don't have to remember an
+        // init step.
+        private string[] _skipSubstringsCache;
+        private string _skipSubstringsCacheSource;
+
+        /// <summary>
+        /// True if the given parameter name should be left untouched because it
+        /// matches one of the user-configured skip substrings (in addition to
+        /// VRChat built-ins, which are checked separately by VRChatBuiltins).
+        /// </summary>
+        public bool ShouldSkipParameter(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            var raw = Options?.skipParametersContaining ?? "";
+            if (!ReferenceEquals(_skipSubstringsCacheSource, raw))
+            {
+                _skipSubstringsCacheSource = raw;
+                var parts = raw.Split(',');
+                var list = new List<string>(parts.Length);
+                foreach (var p in parts)
+                {
+                    var t = p.Trim();
+                    if (t.Length > 0) list.Add(t);
+                }
+                _skipSubstringsCache = list.ToArray();
+            }
+            for (int i = 0; i < _skipSubstringsCache.Length; i++)
+            {
+                if (name.IndexOf(_skipSubstringsCache[i], System.StringComparison.Ordinal) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
         public string MapParameter(string original)
         {
             if (string.IsNullOrEmpty(original)) return original;

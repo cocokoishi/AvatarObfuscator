@@ -2,6 +2,21 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.1] - 2026-05-05
+
+### Added
+- **Skip Parameters Containing** option in the inspector. Comma-separated,
+  case-sensitive substrings; any animator / expression / PhysBone / contact
+  parameter whose name contains one of them is left plaintext, in addition to
+  the existing VRChat built-in skip list. Useful for face-tracking bridges,
+  OSC tools, and shaders that read parameter names as strings.
+  Default: `FT,eye`.
+
+### Changed
+- **Seed default** changed from `0` (= random per build) to `5145514`, so two
+  builds of the same avatar produce identical obfuscated names by default.
+  Set the seed back to `0` to restore the previous random-per-build behaviour.
+
 ## [0.3.0] - 2026-05-05
 
 **First stable release.**

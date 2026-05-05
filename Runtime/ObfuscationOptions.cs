@@ -24,6 +24,15 @@ namespace HateRipper.AvatarObfuscator
                  "are NOT touched, only the parameter names they reference.")]
         public bool obfuscateExpressionParameters = true;
 
+        [Tooltip("Comma-separated substrings (case-sensitive). Any animator / expression / PhysBone / " +
+                 "contact parameter whose name CONTAINS one of these is left untouched, in addition to " +
+                 "VRChat built-ins. Useful when an external system (face-tracking bridge, OSC tool, " +
+                 "custom shader, ...) reads the parameter name as a string and would break if renamed.\n\n" +
+                 "Default: 'FT,eye' — i.e. anything containing 'FT' (face tracking) or 'eye' (eye " +
+                 "tracking / lookat) stays plaintext. Leave blank to obfuscate everything that isn't a " +
+                 "VRChat built-in.")]
+        public string skipParametersContaining = "FT,eye";
+
         [Header("Mesh / Blendshape")]
         [Tooltip("Rename blendshape keys on every Skinned Mesh, while updating SetBlendShapeWeight " +
                  "references and animation curves accordingly.")]
@@ -87,10 +96,12 @@ namespace HateRipper.AvatarObfuscator
         public bool rewriteAnimationClips = true;
 
         [Header("Advanced")]
-        [Tooltip("A salt mixed into the random-name generator. Two avatars with the same salt produce " +
-                 "the same renaming, which is occasionally useful for diffing. Leave at 0 for a " +
-                 "fresh random salt every build.")]
-        public int seed = 0;
+        [Tooltip("A salt mixed into the random-name generator. A non-zero seed produces the SAME " +
+                 "obfuscated names every build (useful for diffing, source-control review, and any " +
+                 "downstream tool that has cached the rename map). Set to 0 for a fresh random salt " +
+                 "every build (less reproducible, but harder for an attacker to predict). " +
+                 "Default 5145514 — the author's Bilibili UID.")]
+        public int seed = 5145514;
 
         [Tooltip("Length of generated obfuscated names. The alphabet has 4 symbols so each character " +
                  "is 2 bits of entropy; a length of 24 gives 48 bits / ~280 trillion unique names. " +

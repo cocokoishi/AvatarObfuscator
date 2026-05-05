@@ -105,6 +105,7 @@ namespace HateRipper.AvatarObfuscator.Passes
             foreach (var name in parameterNames.OrderBy(n => n)) // stable order for determinism
             {
                 if (VRChatBuiltins.IsBuiltinParameter(name)) continue;
+                if (state.ShouldSkipParameter(name)) continue;
                 if (state.ParameterRenames.ContainsKey(name)) continue;
                 state.ParameterRenames[name] = state.NameGen.Next();
             }
@@ -213,6 +214,7 @@ namespace HateRipper.AvatarObfuscator.Passes
             {
                 var p = pb.parameter;
                 if (string.IsNullOrEmpty(p)) continue;
+                if (state.ShouldSkipParameter(p)) continue;
                 if (state.PhysBonePrefixRenames.ContainsKey(p)) continue;
                 state.PhysBonePrefixRenames[p] = state.NameGen.Next();
             }
@@ -221,6 +223,7 @@ namespace HateRipper.AvatarObfuscator.Passes
                 var p = cr.parameter;
                 if (string.IsNullOrEmpty(p)) continue;
                 if (VRChatBuiltins.IsBuiltinParameter(p)) continue;
+                if (state.ShouldSkipParameter(p)) continue;
                 if (state.ParameterRenames.ContainsKey(p)) continue;
                 state.ParameterRenames[p] = state.NameGen.Next();
             }
