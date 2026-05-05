@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -9,7 +9,7 @@ using UnityEngine;
 using VRC.SDK3.Avatars.Components;
 #endif
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Final pass: renames the asset names on temporary assets that were cloned by

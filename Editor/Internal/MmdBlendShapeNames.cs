@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Blendshape names VRChat uses to recognise an avatar as MMD-capable.

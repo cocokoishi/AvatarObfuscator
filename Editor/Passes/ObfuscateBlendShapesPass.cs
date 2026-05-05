@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEngine;
 #if FR_OBF_VRCSDK3_AVATARS
@@ -7,7 +7,7 @@ using VRC.SDK3.Avatars.Components;
 using VRC.SDKBase;
 #endif
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Clones every <see cref="Mesh"/> attached to a <see cref="SkinnedMeshRenderer"/>

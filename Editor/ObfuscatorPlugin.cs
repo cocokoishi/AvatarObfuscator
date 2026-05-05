@@ -1,11 +1,11 @@
 using System;
-using FuckRipper.AvatarObfuscator.Internal;
-using FuckRipper.AvatarObfuscator.Passes;
+using HateRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Passes;
 using nadena.dev.ndmf;
 
-[assembly: ExportsPlugin(typeof(FuckRipper.AvatarObfuscator.ObfuscatorPlugin))]
+[assembly: ExportsPlugin(typeof(HateRipper.AvatarObfuscator.ObfuscatorPlugin))]
 
-namespace FuckRipper.AvatarObfuscator
+namespace HateRipper.AvatarObfuscator
 {
     /// <summary>
     /// Top-level NDMF plugin entry. Schedules all obfuscation passes in

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Deterministic homoglyph-name generator. The alphabet is intentionally

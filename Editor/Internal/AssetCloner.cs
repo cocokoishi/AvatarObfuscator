@@ -5,7 +5,7 @@ using UnityEditor.Animations;
 using UnityEngine;
 using Object = UnityEngine.Object;
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Helpers for safely cloning animator assets and their sub-assets so we can

@@ -9,7 +9,7 @@ using Object = UnityEngine.Object;
 using VRC.SDK3.Avatars.Components;
 #endif
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Conservative skinned-mesh merger.

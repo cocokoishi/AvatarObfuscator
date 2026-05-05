@@ -2,6 +2,14 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.2.9] - 2026-05-05
+
+### Changed
+- **Obfuscate Textures** option now defaults to OFF and marked as "(not working)" in
+  the inspector — the v0.2.7 UV island rearrangement fix is not yet complete, and
+  texture obfuscation may still produce garbled output in some cases. Users who want
+  to try it can still enable it manually.
+
 ## [0.2.7] - 2026-05-05
 
 ### Fixed

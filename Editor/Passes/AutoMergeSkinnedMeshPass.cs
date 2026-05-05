@@ -1,7 +1,7 @@
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Optional pass: merges <see cref="UnityEngine.SkinnedMeshRenderer"/>s that

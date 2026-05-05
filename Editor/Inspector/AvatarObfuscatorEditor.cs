@@ -1,7 +1,7 @@
 using UnityEditor;
 using UnityEngine;
 
-namespace FuckRipper.AvatarObfuscator.Inspector
+namespace HateRipper.AvatarObfuscator.Inspector
 {
     [CustomEditor(typeof(AvatarObfuscator))]
     internal sealed class AvatarObfuscatorEditor : UnityEditor.Editor
@@ -109,7 +109,7 @@ namespace FuckRipper.AvatarObfuscator.Inspector
 
                 EditorGUILayout.Space();
                 Section("Texture");
-                RightAlignedToggle(_remapUv, "Obfuscate Textures",
+                RightAlignedToggle(_remapUv, "Obfuscate Textures (not working)",
                     "For every Texture2D on every material, generate a byte-different copy by " +
                     "rearranging UV islands in lockstep on both the texture pixels and the " +
                     "mesh UVs — the same principle as TexTransTool's atlas (even a one-texture " +

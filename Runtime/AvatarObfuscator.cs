@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace FuckRipper.AvatarObfuscator
+namespace HateRipper.AvatarObfuscator
 {
     /// <summary>
     /// Drop this on the avatar root (the GameObject that has VRCAvatarDescriptor).

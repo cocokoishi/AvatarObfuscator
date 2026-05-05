@@ -1,7 +1,7 @@
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Per-UV-island texture rearrangement pass — modelled on TexTransTool's

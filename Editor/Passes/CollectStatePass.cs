@@ -1,7 +1,7 @@
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// First pass. Looks for an enabled <see cref="AvatarObfuscator"/> on the

@@ -1,9 +1,9 @@
 using System.Collections.Generic;
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEngine;
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Renames every GameObject under the avatar root, except for entries in the

@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using UnityEditor.Animations;
 using UnityEngine;
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Recursive walker that yields every <see cref="AnimatorState"/>,

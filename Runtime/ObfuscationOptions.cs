@@ -1,7 +1,7 @@
 using System;
 using UnityEngine;
 
-namespace FuckRipper.AvatarObfuscator
+namespace HateRipper.AvatarObfuscator
 {
     /// <summary>
     /// Per-category toggles for what to obfuscate. Lives on <see cref="AvatarObfuscator"/>.
@@ -68,7 +68,7 @@ namespace FuckRipper.AvatarObfuscator
                  "Material per-texture scale/offset (_TextureName_ST) values are kept identical to " +
                  "the source. UV channels 0–3 are remapped in lockstep. Cubemaps, 3D textures, " +
                  "render textures and HDR formats are passed through unmodified.")]
-        public bool remapUvTextures = true;
+        public bool remapUvTextures = false;
 
         [Header("Mesh Merge (Optional)")]
         [Tooltip("Optional. Merge skinned meshes that share root bone and a strict safety profile " +

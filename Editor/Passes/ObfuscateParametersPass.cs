@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEditor.Animations;
 using UnityEngine;
@@ -13,7 +13,7 @@ using VRC.SDK3.Dynamics.PhysBone.Components;
 using VRC.SDKBase;
 #endif
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Renames every user-defined animator parameter, then walks every animator and

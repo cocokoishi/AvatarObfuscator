@@ -1,6 +1,6 @@
 {
     "name": "dev.cocokoishi.avatar-obfuscator.editor",
-    "rootNamespace": "FuckRipper.AvatarObfuscator",
+    "rootNamespace": "HateRipper.AvatarObfuscator",
     "references": [
         "dev.cocokoishi.avatar-obfuscator.runtime",
         "nadena.dev.ndmf",

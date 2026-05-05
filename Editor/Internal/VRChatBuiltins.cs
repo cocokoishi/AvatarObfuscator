@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace FuckRipper.AvatarObfuscator.Internal
+namespace HateRipper.AvatarObfuscator.Internal
 {
     /// <summary>
     /// Names that VRChat itself writes into the animator each frame. They are not

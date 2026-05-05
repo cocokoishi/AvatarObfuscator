@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using FuckRipper.AvatarObfuscator.Internal;
+using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -10,7 +10,7 @@ using Object = UnityEngine.Object;
 using VRC.SDK3.Avatars.Components;
 #endif
 
-namespace FuckRipper.AvatarObfuscator.Passes
+namespace HateRipper.AvatarObfuscator.Passes
 {
     /// <summary>
     /// Walks every <see cref="AnimationClip"/> reachable from the avatar's animators
