@@ -9,7 +9,11 @@ All notable changes to this package will be documented in this file.
 - **Contact/PhysBone Asymmetry Bug**: Fixed a severe bug where `ContactReceiver` and `VRCPhysBone` parameters would be renamed even if their corresponding Animator Controller failed to process (e.g., due to a broken or missing base controller). This asymmetry would break Contact functionality entirely because the Contact component was writing to an obfuscated parameter name while the animator was still expecting the original plaintext name.
   - The obfuscator now strictly guarantees that Contact and PhysBone parameters are *only* obfuscated if they are successfully consumed by at least one valid Animator Controller.
 - **Expression Parameters Guard Bypass**: Fixed an edge case where the safety guard for Contact/PhysBone parameters could be inadvertently bypassed if the unconsumed parameter was also listed in the avatar's Expression Parameters. The guard now ensures these parameters remain strictly plaintext across all components when the consuming animator cannot be resolved.
+- **Synced Layer Override Motion Leak**: Fixed a bug where synced-layer override motions (particularly `BlendTree`s) were passed as raw references into the cloned controller instead of being deep-cloned. Downstream passes that mutate `BlendTree.children` in-place would then pollute the user's original on-disk asset — after a build, the source BlendTree's child clips could point to destroyed temporary objects, causing null references on subsequent builds.
 - **Improved Diagnostics**: The obfuscator will now print clear, actionable `Debug.LogWarning` messages in the Unity Console if an `AnimatorOverrideController` fails to resolve, indicating exactly which Animation Layer or component slot caused the failure, and which parameters were safely skipped from obfuscation as a result.
+
+### Changed
+- **Inspector**: Removed the "Obfuscate Textures" and "Auto-Merge Skinned Mesh" sections from the inspector UI. Both features are not production-ready; their backend logic is fully preserved and can be re-enabled in a future release. Existing scene data with these options serialized is unaffected (both default to OFF).
 
 ## [0.3.1] - 2026-05-05
 

@@ -114,29 +114,33 @@ namespace HateRipper.AvatarObfuscator.Inspector
                     EditorGUI.indentLevel--;
                 }
 
-                EditorGUILayout.Space();
-                Section("Texture");
-                RightAlignedToggle(_remapUv, "Obfuscate Textures (not working)",
-                    "For every Texture2D on every material, generate a byte-different copy by " +
-                    "rearranging UV islands in lockstep on both the texture pixels and the " +
-                    "mesh UVs — the same principle as TexTransTool's atlas (even a one-texture " +
-                    "atlas group still repacks islands). Each island gets a deterministic " +
-                    "within-bbox FlipH / FlipV / Rot180 transform. The output is recompressed " +
-                    "back to the source's compressed format (BC7 / DXT5 / ASTC / ETC2 / etc.) " +
-                    "so runtime VRAM and bundle size match the original.\n\n" +
-                    "A ripper extracting your avatar can no longer match its textures against " +
-                    "asset-store originals by content hash. Material per-texture scale/offset " +
-                    "values are not touched. Cubemaps, 3D textures, render textures and HDR " +
-                    "formats are skipped.");
-
-                EditorGUILayout.Space();
-                Section("Mesh Merge (Optional)");
-                RightAlignedToggle(_autoMergeMesh, "Auto-Merge Skinned Mesh",
-                    "Optional draw-call optimisation. Merges SkinnedMeshRenderers that share a root " +
-                    "bone and pass a strict safety profile (no blendshapes, no animations referencing " +
-                    "their path, no special components on the GameObject).\n\n" +
-                    "OFF by default — this is NOT an obfuscation feature. If you also have Avatar " +
-                    "Optimizer's Trace and Optimize installed, leave this off and let AAO do the merge.");
+                // [Hidden] Texture obfuscation and Mesh Merge UI — features are not
+                // production-ready. Backend logic is preserved; only the inspector
+                // controls are suppressed so users cannot enable them.
+                //
+                // EditorGUILayout.Space();
+                // Section("Texture");
+                // RightAlignedToggle(_remapUv, "Obfuscate Textures (not working)",
+                //     "For every Texture2D on every material, generate a byte-different copy by " +
+                //     "rearranging UV islands in lockstep on both the texture pixels and the " +
+                //     "mesh UVs — the same principle as TexTransTool's atlas (even a one-texture " +
+                //     "atlas group still repacks islands). Each island gets a deterministic " +
+                //     "within-bbox FlipH / FlipV / Rot180 transform. The output is recompressed " +
+                //     "back to the source's compressed format (BC7 / DXT5 / ASTC / ETC2 / etc.) " +
+                //     "so runtime VRAM and bundle size match the original.\n\n" +
+                //     "A ripper extracting your avatar can no longer match its textures against " +
+                //     "asset-store originals by content hash. Material per-texture scale/offset " +
+                //     "values are not touched. Cubemaps, 3D textures, render textures and HDR " +
+                //     "formats are skipped.");
+                //
+                // EditorGUILayout.Space();
+                // Section("Mesh Merge (Optional)");
+                // RightAlignedToggle(_autoMergeMesh, "Auto-Merge Skinned Mesh",
+                //     "Optional draw-call optimisation. Merges SkinnedMeshRenderers that share a root " +
+                //     "bone and pass a strict safety profile (no blendshapes, no animations referencing " +
+                //     "their path, no special components on the GameObject).\n\n" +
+                //     "OFF by default — this is NOT an obfuscation feature. If you also have Avatar " +
+                //     "Optimizer's Trace and Optimize installed, leave this off and let AAO do the merge.");
 
                 EditorGUILayout.Space();
                 Section("Animation");

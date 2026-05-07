@@ -175,7 +175,7 @@ namespace HateRipper.AvatarObfuscator.Internal
                     var dstState = stPair.Item2;
                     var motion = srcLayers[i].GetOverrideMotion(srcState);
                     if (motion != null)
-                        dstLayers[i].SetOverrideMotion(dstState, motion);
+                        dstLayers[i].SetOverrideMotion(dstState, CloneMotion(ctx, motion));
                     var beh = srcLayers[i].GetOverrideBehaviours(srcState);
                     if (beh != null && beh.Length > 0)
                     {
