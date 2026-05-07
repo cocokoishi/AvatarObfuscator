@@ -39,19 +39,56 @@ namespace HateRipper.AvatarObfuscator.Internal
         private static AnimatorController FlattenOverrideController(BuildContext ctx, AnimatorOverrideController over)
         {
             if (over == null) return null;
-            var baseController = over.runtimeAnimatorController as AnimatorController;
-            if (baseController == null) return null;
+
+            // Walk down the AOC chain, collecting each layer into a stack.
+            // Push order is outer-first (the while loop starts from `over`),
+            // so Stack<T> foreach (LIFO) naturally yields inner-first iteration
+            // — exactly the apply order we need.
+            var stack = new Stack<AnimatorOverrideController>();
+            var visited = new HashSet<RuntimeAnimatorController>();
+            AnimatorController baseController = null;
+            var cur = over;
+
+            while (cur != null && visited.Add(cur))
+            {
+                stack.Push(cur);
+                var next = cur.runtimeAnimatorController;
+                if (next is AnimatorController concrete)
+                {
+                    baseController = concrete;
+                    break;
+                }
+                cur = next as AnimatorOverrideController;
+            }
+
+            if (baseController == null)
+            {
+                Debug.LogWarning(
+                    $"[AvatarObfuscator] AnimatorOverrideController '{over.name}' has no resolvable " +
+                    "AnimatorController base (the chain may be broken, circular, or the base field is empty). " +
+                    "This layer will be skipped — its parameters will NOT be obfuscated. " +
+                    "Recommendation: replace this Override with a plain AnimatorController, or fix the base reference.");
+                return null;
+            }
 
             var clone = DeepCloneController(ctx, baseController);
-            // Apply overrides
-            var overrides = new List<KeyValuePair<AnimationClip, AnimationClip>>(over.overridesCount);
-            over.GetOverrides(overrides);
-            var map = new Dictionary<AnimationClip, AnimationClip>();
-            foreach (var kv in overrides)
-                if (kv.Key != null && kv.Value != null) map[kv.Key] = kv.Value;
 
-            foreach (var s in AnimatorWalker.AllStates(clone))
-                s.motion = ApplyOverrides(s.motion, map);
+            // Apply overrides layer-by-layer, inner-first then outer.
+            // This ensures multi-hop chains (e.g. base motion X → inner override Y → outer override Z)
+            // resolve correctly: after inner apply, states hold Y; after outer apply, states hold Z.
+            foreach (var aoc in stack)
+            {
+                var pairs = new List<KeyValuePair<AnimationClip, AnimationClip>>(aoc.overridesCount);
+                aoc.GetOverrides(pairs);
+                var layerMap = new Dictionary<AnimationClip, AnimationClip>();
+                foreach (var kv in pairs)
+                    if (kv.Key != null && kv.Value != null)
+                        layerMap[kv.Key] = kv.Value;
+                if (layerMap.Count == 0) continue;
+
+                foreach (var s in AnimatorWalker.AllStates(clone))
+                    s.motion = ApplyOverrides(s.motion, layerMap);
+            }
 
             return clone;
         }

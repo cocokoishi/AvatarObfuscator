@@ -50,9 +50,17 @@ namespace HateRipper.AvatarObfuscator.Passes
             var allControllers = CollectControllers(context, descriptorObj);
 
             var parameterNames = new HashSet<string>();
+            // animatorOnlyParams: parameters that exist in successfully-processed controllers.
+            // Used as a guard for Contact/PhysBone renaming — if a parameter only appears in
+            // an unprocessable controller (e.g. broken AOC), renaming the Contact/PhysBone side
+            // without the animator side creates an asymmetry that breaks functionality.
+            var animatorOnlyParams = new HashSet<string>();
             foreach (var ac in allControllers)
                 foreach (var p in ac.parameters)
+                {
                     parameterNames.Add(p.name);
+                    animatorOnlyParams.Add(p.name);
+                }
 
 #if FR_OBF_VRCSDK3_AVATARS
             VRCExpressionParameters expParams = descriptor != null
@@ -79,7 +87,9 @@ namespace HateRipper.AvatarObfuscator.Passes
             //     consistent rename, otherwise PhysBone writes to one name and the
             //     animator reads another.
 #if FR_OBF_VRCSDK3_AVATARS
-            CollectPhysBoneAndContactPrefixes(context, state);
+            var guardedParams = CollectPhysBoneAndContactPrefixes(context, state, animatorOnlyParams);
+#else
+            var guardedParams = new HashSet<string>();
 #endif
 
             // 2b. Lock in the suffixed forms of any PhysBone prefix into ParameterRenames.
@@ -107,6 +117,11 @@ namespace HateRipper.AvatarObfuscator.Passes
                 if (VRChatBuiltins.IsBuiltinParameter(name)) continue;
                 if (state.ShouldSkipParameter(name)) continue;
                 if (state.ParameterRenames.ContainsKey(name)) continue;
+                // Skip parameters that were guarded in step 2a — their Contact/PhysBone
+                // was deliberately left plaintext because the consuming controller could
+                // not be processed. Renaming them here (e.g. via Expression Parameters)
+                // would re-introduce the asymmetry the guard was designed to prevent.
+                if (guardedParams.Contains(name)) continue;
                 state.ParameterRenames[name] = state.NameGen.Next();
             }
 
@@ -172,6 +187,13 @@ namespace HateRipper.AvatarObfuscator.Passes
                         baseLayers[i].animatorController = temp;
                         list.Add(temp);
                     }
+                    else
+                    {
+                        Debug.LogWarning(
+                            $"[AvatarObfuscator] baseAnimationLayers[{i}] controller '{baseLayers[i].animatorController.name}' " +
+                            "could not be processed (likely an AnimatorOverrideController with a broken base). " +
+                            "Parameters on this layer will NOT be obfuscated.");
+                    }
                 }
                 descriptor.baseAnimationLayers = baseLayers;
 
@@ -184,6 +206,13 @@ namespace HateRipper.AvatarObfuscator.Passes
                     {
                         specialLayers[i].animatorController = temp;
                         list.Add(temp);
+                    }
+                    else
+                    {
+                        Debug.LogWarning(
+                            $"[AvatarObfuscator] specialAnimationLayers[{i}] controller '{specialLayers[i].animatorController.name}' " +
+                            "could not be processed (likely an AnimatorOverrideController with a broken base). " +
+                            "Parameters on this layer will NOT be obfuscated.");
                     }
                 }
                 descriptor.specialAnimationLayers = specialLayers;
@@ -199,6 +228,13 @@ namespace HateRipper.AvatarObfuscator.Passes
                     animator.runtimeAnimatorController = temp;
                     if (!list.Contains(temp)) list.Add(temp);
                 }
+                else
+                {
+                    Debug.LogWarning(
+                        $"[AvatarObfuscator] Animator on '{animator.gameObject.name}' controller '{animator.runtimeAnimatorController.name}' " +
+                        "could not be processed (likely an AnimatorOverrideController with a broken base). " +
+                        "Parameters on this animator will NOT be obfuscated.");
+                }
             }
 
             return list;
@@ -208,14 +244,57 @@ namespace HateRipper.AvatarObfuscator.Passes
         // PhysBone & ContactReceiver
         // ------------------------------------------------------------------
 #if FR_OBF_VRCSDK3_AVATARS
-        private static void CollectPhysBoneAndContactPrefixes(BuildContext ctx, ObfuscationContext state)
+        /// <param name="animatorOnlyParams">
+        /// Parameter names that exist in at least one successfully-processed AnimatorController.
+        /// Used as a guard: if a Contact/PhysBone parameter is NOT consumed by any processed
+        /// controller, renaming it would create an asymmetry (contact renamed, animator not)
+        /// that breaks functionality at runtime.
+        /// </param>
+        /// <returns>
+        /// A set of parameter names that were deliberately left un-renamed because
+        /// their consuming controller could not be processed. The caller must exclude
+        /// these from step 2c so that Expression Parameters don't re-introduce the
+        /// rename and re-create the asymmetry.
+        /// </returns>
+        private static HashSet<string> CollectPhysBoneAndContactPrefixes(BuildContext ctx, ObfuscationContext state,
+            HashSet<string> animatorOnlyParams)
         {
+            var guardedParams = new HashSet<string>();
+
             foreach (var pb in ctx.AvatarRootObject.GetComponentsInChildren<VRCPhysBone>(true))
             {
                 var p = pb.parameter;
                 if (string.IsNullOrEmpty(p)) continue;
                 if (state.ShouldSkipParameter(p)) continue;
                 if (state.PhysBonePrefixRenames.ContainsKey(p)) continue;
+
+                // Guard: at least one suffixed form (e.g. prefix_IsGrabbed) must appear
+                // in a successfully-processed controller. If none do, renaming the prefix
+                // would break the PhysBone→animator link.
+                bool anySuffixConsumed = false;
+                foreach (var suffix in PhysBoneSuffixes)
+                {
+                    if (animatorOnlyParams.Contains(p + suffix))
+                    {
+                        anySuffixConsumed = true;
+                        break;
+                    }
+                }
+                if (!anySuffixConsumed)
+                {
+                    Debug.LogWarning(
+                        $"[AvatarObfuscator] PhysBone parameter prefix '{p}' on '{pb.gameObject.name}' is not consumed " +
+                        "by any successfully-processed animator; leaving plaintext to avoid breaking the PhysBone. " +
+                        "If you expected obfuscation, check whether the animator that reads this parameter " +
+                        "is an unresolvable AnimatorOverrideController.");
+                    // Guard the prefix itself and all its suffixed forms so step 2c
+                    // doesn't re-introduce the rename via Expression Parameters.
+                    guardedParams.Add(p);
+                    foreach (var suffix in PhysBoneSuffixes)
+                        guardedParams.Add(p + suffix);
+                    continue;
+                }
+
                 state.PhysBonePrefixRenames[p] = state.NameGen.Next();
             }
             foreach (var cr in ctx.AvatarRootObject.GetComponentsInChildren<ContactReceiver>(true))
@@ -225,8 +304,23 @@ namespace HateRipper.AvatarObfuscator.Passes
                 if (VRChatBuiltins.IsBuiltinParameter(p)) continue;
                 if (state.ShouldSkipParameter(p)) continue;
                 if (state.ParameterRenames.ContainsKey(p)) continue;
+
+                // Guard: only rename if the parameter is consumed by a processed controller.
+                if (!animatorOnlyParams.Contains(p))
+                {
+                    Debug.LogWarning(
+                        $"[AvatarObfuscator] Contact parameter '{p}' on '{cr.gameObject.name}' is not consumed " +
+                        "by any successfully-processed animator; leaving plaintext to avoid breaking the contact. " +
+                        "If you expected obfuscation, check whether the animator that reads this parameter " +
+                        "is an unresolvable AnimatorOverrideController.");
+                    guardedParams.Add(p);
+                    continue;
+                }
+
                 state.ParameterRenames[p] = state.NameGen.Next();
             }
+
+            return guardedParams;
         }
 
         private static void RewritePhysBonesAndContacts(BuildContext ctx, ObfuscationContext state)
