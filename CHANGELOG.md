@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.4] - 2026-05-07
+
+### Fixed
+- **AnimatorOverrideController Support**: Fixed a silent failure where deeply nested `AnimatorOverrideController` chains (e.g., `AOC` -> `AOC` -> `AnimatorController`) or `AnimatorOverrideController`s with empty base controllers would cause the obfuscator to silently skip processing the controller. Overrides are now correctly flattened by recursively applying each layer from inner to outer, faithfully matching Unity's native override resolution semantics.
+- **Contact/PhysBone Asymmetry Bug**: Fixed a severe bug where `ContactReceiver` and `VRCPhysBone` parameters would be renamed even if their corresponding Animator Controller failed to process (e.g., due to a broken or missing base controller). This asymmetry would break Contact functionality entirely because the Contact component was writing to an obfuscated parameter name while the animator was still expecting the original plaintext name.
+  - The obfuscator now strictly guarantees that Contact and PhysBone parameters are *only* obfuscated if they are successfully consumed by at least one valid Animator Controller.
+- **Expression Parameters Guard Bypass**: Fixed an edge case where the safety guard for Contact/PhysBone parameters could be inadvertently bypassed if the unconsumed parameter was also listed in the avatar's Expression Parameters. The guard now ensures these parameters remain strictly plaintext across all components when the consuming animator cannot be resolved.
+- **Improved Diagnostics**: The obfuscator will now print clear, actionable `Debug.LogWarning` messages in the Unity Console if an `AnimatorOverrideController` fails to resolve, indicating exactly which Animation Layer or component slot caused the failure, and which parameters were safely skipped from obfuscation as a result.
+
 ## [0.3.1] - 2026-05-05
 
 ### Added
