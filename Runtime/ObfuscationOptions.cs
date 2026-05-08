@@ -32,6 +32,15 @@ namespace HateRipper.AvatarObfuscator
                  "Leave blank to obfuscate everything that isn't a VRChat built-in.")]
         public string skipParametersContaining = "OGB/,FT/,VFH/,VF/,v2/,EchoFT/,OSCm/,PBS/,DPS/,SPS/,TPS/,VRCF/,Go/,__ModularAvatarInternal/,AAO_,d4rkAvatarOptimizer/,VRCFury/,_VF/,_vrcf/";
 
+        [Tooltip("Move every state, sub-state-machine, Entry / Exit / Any State / parent-link node " +
+                 "in every state machine to position (0, 0, 0). The whole graph collapses into a " +
+                 "single overlapping pile in the Animator window — completely unreadable to a ripper " +
+                 "trying to understand the avatar's logic.\n\n" +
+                 "Position values are pure editor-only cosmetic data. The runtime state machine " +
+                 "treats them as no-ops, so transitions, blend trees, parameter drivers and every " +
+                 "other behaviour keep working exactly as before.")]
+        public bool flattenStatePositions = true;
+
         [Header("Mesh / Blendshape")]
         [Tooltip("Rename blendshape keys on every Skinned Mesh, while updating SetBlendShapeWeight " +
                  "references and animation curves accordingly.")]

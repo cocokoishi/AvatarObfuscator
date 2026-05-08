@@ -133,6 +133,18 @@ namespace HateRipper.AvatarObfuscator.Passes
                 RewriteController(ac, state);
 
             // ------------------------------------------------------------------
+            // 4b. Optional cosmetic obfuscation: collapse every state-machine node
+            //     to position (0, 0, 0). The Animator window then shows an
+            //     unreadable pile of overlapping nodes — runtime behaviour is
+            //     untouched because position fields are pure editor cosmetic data.
+            // ------------------------------------------------------------------
+            if (state.Options.flattenStatePositions)
+            {
+                foreach (var ac in allControllers)
+                    FlattenStatePositions(ac);
+            }
+
+            // ------------------------------------------------------------------
             // 5. Rewrite VRCAvatarDescriptor parameter slots (Expression Parameters,
             //    Expression Menu).
             // ------------------------------------------------------------------
@@ -408,6 +420,42 @@ namespace HateRipper.AvatarObfuscator.Passes
                     return newPrefix + suffix;
             }
             return original;
+        }
+
+        // ------------------------------------------------------------------
+        // State-position flattening (pure cosmetic obfuscation)
+        // ------------------------------------------------------------------
+        // Position fields on AnimatorStateMachine / ChildAnimatorState /
+        // ChildAnimatorStateMachine are editor-only data used by the Animator
+        // window to lay out nodes in the graph view. Zeroing them collapses
+        // every node onto the origin so a ripper inspecting the controller
+        // sees an unreadable pile, while the runtime — which only consumes
+        // states, transitions and behaviours — is unaffected.
+        //
+        // The controllers we mutate here are temporary clones produced by
+        // AssetCloner.EnsureTemporary, so this never touches the user's
+        // source asset.
+        private static void FlattenStatePositions(AnimatorController controller)
+        {
+            foreach (var sm in AnimatorWalker.AllStateMachines(controller))
+            {
+                sm.entryPosition = Vector3.zero;
+                sm.anyStatePosition = Vector3.zero;
+                sm.exitPosition = Vector3.zero;
+                sm.parentStateMachinePosition = Vector3.zero;
+
+                // ChildAnimatorState is a struct: mutate a copy of the array,
+                // then assign it back to commit the position change.
+                var states = sm.states;
+                for (int i = 0; i < states.Length; i++)
+                    states[i].position = Vector3.zero;
+                sm.states = states;
+
+                var subSMs = sm.stateMachines;
+                for (int i = 0; i < subSMs.Length; i++)
+                    subSMs[i].position = Vector3.zero;
+                sm.stateMachines = subSMs;
+            }
         }
 
         private static void RewriteBehaviour(StateMachineBehaviour behaviour, ObfuscationContext state)

@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.6] - 2026-05-08
+
+### Added
+- **Flatten State Positions**: New optional sub-toggle under *Animator Parameters* (default ON). When enabled, every state, sub-state-machine, and the Entry / Exit / Any State / parent-link nodes inside every animator state machine are moved to position `(0, 0, 0)`. The Animator window then renders the entire graph as a single overlapping pile — completely unreadable to a ripper trying to reverse-engineer your avatar's logic, while runtime behaviour is left fully intact (position fields are pure editor-only cosmetic data; transitions, blend trees, parameter drivers, and every other behaviour keep working exactly as before).
+
 ## [0.3.5] - 2026-05-08
 
 ### Added

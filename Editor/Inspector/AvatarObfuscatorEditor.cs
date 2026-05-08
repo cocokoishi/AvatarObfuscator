@@ -11,6 +11,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _params;
         private SerializedProperty _expParams;
         private SerializedProperty _skipParams;
+        private SerializedProperty _flattenStates;
         private SerializedProperty _blendShapes;
         private SerializedProperty _preserveMmd;
         private SerializedProperty _hierarchy;
@@ -32,6 +33,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             _params          = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateParameters));
             _expParams       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateExpressionParameters));
             _skipParams      = _options.FindPropertyRelative(nameof(ObfuscationOptions.skipParametersContaining));
+            _flattenStates   = _options.FindPropertyRelative(nameof(ObfuscationOptions.flattenStatePositions));
             _blendShapes     = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateBlendShapes));
             _preserveMmd     = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBlendShapes));
             _hierarchy       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateHierarchy));
@@ -75,6 +77,13 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "Rename the parameter entries in the VRC Expression Parameters list and rewrite " +
                         "the parameter references inside the Expression Menu. The user-visible labels in " +
                         "the menu are kept — only the parameter names they reference are renamed.");
+                    RightAlignedToggle(_flattenStates, "Flatten State Positions",
+                        "Move every state, sub-state-machine and Entry / Exit / Any State / parent-link " +
+                        "node onto position (0, 0, 0) in every animator state machine. The Animator " +
+                        "window then shows an unreadable pile of overlapping nodes — a ripper trying to " +
+                        "reverse-engineer your avatar's logic loses all visual layout cues.\n\n" +
+                        "Position values are pure editor-only cosmetic data; runtime behaviour is " +
+                        "completely unchanged. Safe to leave on.");
                     EditorGUILayout.PropertyField(_skipParams, new GUIContent("Skip Parameters Containing",
                         "Comma-separated substrings (case-sensitive). Parameter names that CONTAIN any of " +
                         "these stay plaintext, in addition to VRChat built-ins. Use this for face-tracking " +

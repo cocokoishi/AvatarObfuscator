@@ -34,6 +34,7 @@ namespace HateRipper.AvatarObfuscator.Passes
                 obfuscateParameters = src.obfuscateParameters,
                 obfuscateExpressionParameters = src.obfuscateExpressionParameters,
                 skipParametersContaining = src.skipParametersContaining,
+                flattenStatePositions = src.flattenStatePositions,
                 obfuscateBlendShapes = src.obfuscateBlendShapes,
                 preserveMmdBlendShapes = src.preserveMmdBlendShapes,
                 obfuscateHierarchy = src.obfuscateHierarchy,
