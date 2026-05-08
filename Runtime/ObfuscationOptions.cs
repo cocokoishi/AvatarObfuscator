@@ -28,10 +28,9 @@ namespace HateRipper.AvatarObfuscator
                  "contact parameter whose name CONTAINS one of these is left untouched, in addition to " +
                  "VRChat built-ins. Useful when an external system (face-tracking bridge, OSC tool, " +
                  "custom shader, ...) reads the parameter name as a string and would break if renamed.\n\n" +
-                 "Default: 'FT,eye' — i.e. anything containing 'FT' (face tracking) or 'eye' (eye " +
-                 "tracking / lookat) stays plaintext. Leave blank to obfuscate everything that isn't a " +
-                 "VRChat built-in.")]
-        public string skipParametersContaining = "FT,eye";
+                 "Default: 'OGB/,FT/,VFH/,VF/,v2/,EchoFT/,OSCm/,PBS/,DPS/,SPS/,TPS/,VRCF/,Go/,__ModularAvatarInternal/,AAO_,d4rkAvatarOptimizer/,VRCFury/,_VF/,_vrcf/'. " +
+                 "Leave blank to obfuscate everything that isn't a VRChat built-in.")]
+        public string skipParametersContaining = "OGB/,FT/,VFH/,VF/,v2/,EchoFT/,OSCm/,PBS/,DPS/,SPS/,TPS/,VRCF/,Go/,__ModularAvatarInternal/,AAO_,d4rkAvatarOptimizer/,VRCFury/,_VF/,_vrcf/";
 
         [Header("Mesh / Blendshape")]
         [Tooltip("Rename blendshape keys on every Skinned Mesh, while updating SetBlendShapeWeight " +

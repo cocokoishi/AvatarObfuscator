@@ -2,6 +2,17 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.5] - 2026-05-08
+
+### Added
+- **Expanded Parameter Exclusion List**: Added a comprehensive set of default excluded parameter substrings (`OGB/`, `FT/`, `VFH/`, `VF/`, `v2/`, `EchoFT/`, `OSCm/`, `PBS/`, `DPS/`, `SPS/`, `TPS/`, `VRCF/`, `Go/`, `__ModularAvatarInternal/`, `AAO_`, `d4rkAvatarOptimizer/`, `VRCFury/`, `_VF/`, `_vrcf/`) to prevent common third-party tools and internal systems from breaking when their parameters are obfuscated.
+
+### Fixed
+- **Robustness Improvements**: Refined the exclusion logic to be more stable. If previous versions caused you any trouble, please update to this version! I believe the logic in this version is much more robust.
+
+### Thanks
+- **Special Thanks**: A huge thank you to **puddingkc** for their invaluable guidance and contributions to the project!
+
 ## [0.3.4] - 2026-05-07
 
 ### Fixed
