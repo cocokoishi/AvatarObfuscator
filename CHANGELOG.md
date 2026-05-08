@@ -11,7 +11,7 @@ All notable changes to this package will be documented in this file.
 - **Robustness Improvements**: Refined the exclusion logic to be more stable. If previous versions caused you any trouble, please update to this version! I believe the logic in this version is much more robust.
 
 ### Thanks
-- **Special Thanks**: A huge thank you to **puddingkc** for their invaluable guidance and contributions to the project!
+- **Special Thanks**: A huge thank you to **puddingkc** for their invaluable guidance and contributions to the project! (Expanded Parameter Exclusion List comes from their project)
 
 ## [0.3.4] - 2026-05-07
 
