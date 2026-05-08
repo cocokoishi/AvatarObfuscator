@@ -39,7 +39,7 @@ namespace HateRipper.AvatarObfuscator
                  "Position values are pure editor-only cosmetic data. The runtime state machine " +
                  "treats them as no-ops, so transitions, blend trees, parameter drivers and every " +
                  "other behaviour keep working exactly as before.")]
-        public bool flattenStatePositions = true;
+        public bool flattenStatePositions = false;
 
         [Header("Mesh / Blendshape")]
         [Tooltip("Rename blendshape keys on every Skinned Mesh, while updating SetBlendShapeWeight " +

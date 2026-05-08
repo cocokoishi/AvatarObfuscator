@@ -77,7 +77,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "Rename the parameter entries in the VRC Expression Parameters list and rewrite " +
                         "the parameter references inside the Expression Menu. The user-visible labels in " +
                         "the menu are kept — only the parameter names they reference are renamed.");
-                    RightAlignedToggle(_flattenStates, "Flatten State Positions",
+                    RightAlignedToggle(_flattenStates, "Flatten State Positions (USELESS)",
                         "Move every state, sub-state-machine and Entry / Exit / Any State / parent-link " +
                         "node onto position (0, 0, 0) in every animator state machine. The Animator " +
                         "window then shows an unreadable pile of overlapping nodes — a ripper trying to " +

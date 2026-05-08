@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.7] - 2026-05-08
+
+### Changed
+- 我们默认关闭了flattenStatePositions这个功能。由于我并不熟悉rip模型的操作，以为ripper rip模型后看见的和播放模式的东西是一摸一样的，但是我的一位朋友看见了我的搞笑操作之后告诉我コントローラー编译的时候会完全丢弃掉位置信息（editoronly），这让我的工作直接白费了，，鉴于csharp脚本非常轻量化，应该不会占用你们硬盘几kb的空间和几(ghz)个时钟周期，我们（指一直和我并肩作战的deepseek v4 pro max）决定保留这些逻辑，作为我来过的证据，只是默认关闭。
+
 ## [0.3.6] - 2026-05-08
 
 ### Added
