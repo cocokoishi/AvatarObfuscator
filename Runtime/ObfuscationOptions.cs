@@ -104,6 +104,21 @@ namespace HateRipper.AvatarObfuscator
         public bool rewriteAnimationClips = true;
 
         [Header("Advanced")]
+        [Tooltip("Use a custom set of 4 obfuscation symbols instead of the built-in ÌÍÎÏ alphabet. " +
+                 "The default custom symbols (II, ll, Il, lI) look nearly identical in most fonts, " +
+                 "making obfuscated names visually indistinguishable from each other.\n\n" +
+                 "When OFF, the original Latin-1 homoglyph alphabet (Ì Í Î Ï) is used.")]
+        public bool useCustomAlphabet = true;
+
+        [Tooltip("First custom alphabet character.")]
+        public string customChar0 = "II";
+        [Tooltip("Second custom alphabet character.")]
+        public string customChar1 = "ll";
+        [Tooltip("Third custom alphabet character.")]
+        public string customChar2 = "Il";
+        [Tooltip("Fourth custom alphabet character.")]
+        public string customChar3 = "lI";
+
         [Tooltip("A salt mixed into the random-name generator. A non-zero seed produces the SAME " +
                  "obfuscated names every build (useful for diffing, source-control review, and any " +
                  "downstream tool that has cached the rename map). Set to 0 for a fresh random salt " +
@@ -116,5 +131,20 @@ namespace HateRipper.AvatarObfuscator
                  "Shorter is smaller in the asset; longer is less collision-prone and harder to read at a glance.")]
         [Range(8, 128)]
         public int generatedNameLength = 24;
+
+        /// <summary>
+        /// Returns the effective 4-character alphabet array based on current settings.
+        /// When <see cref="useCustomAlphabet"/> is true, builds the alphabet from the
+        /// 4 custom character fields; otherwise returns null (meaning use the built-in default).
+        /// </summary>
+        public string[] GetEffectiveAlphabet()
+        {
+            if (!useCustomAlphabet) return null;
+            string s0 = !string.IsNullOrEmpty(customChar0) ? customChar0 : "I";
+            string s1 = !string.IsNullOrEmpty(customChar1) ? customChar1 : "l";
+            string s2 = !string.IsNullOrEmpty(customChar2) ? customChar2 : "Il";
+            string s3 = !string.IsNullOrEmpty(customChar3) ? customChar3 : "lI";
+            return new string[] { s0, s1, s2, s3 };
+        }
     }
 }

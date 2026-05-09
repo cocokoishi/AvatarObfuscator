@@ -2,6 +2,16 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.8] - 2026-05-09
+
+### Added
+- **Custom Obfuscation Symbols**: Added a new toggle under the Advanced section in the Inspector to allow using a custom 4-character alphabet for obfuscation. By default, it uses `II`, `ll`, `Il`, `lI` which look nearly identical in most fonts. You can turn this off to revert to the original `ÌÍÎÏ` alphabet.因为有人告诉我ÌÍÎÏ会导致bug，我想破脑袋都想不出来这怎么会出bug了，，有点神奇，我还是按照隔壁的这样做了。最后长度会变成48如果选择的是24，不过没有任何问题。你会在乎几kb的损失吗？  
+
+### Fixed
+下面两个是ai审计的别问我什么情况  
+- **AvatarMask Rewrite Bug**: Fixed a bug where AvatarMask paths were being rewritten and cloned, but the cloned mask was never properly assigned back to the Animator layer, causing the path obfuscation for AvatarMasks to be completely lost (saved in plaintext).
+- **Null Path Coercion**: Fixed an issue where `null` paths in Animation Clips were being incorrectly coerced to empty strings `""`, causing false-positive rewrites and potentially breaking animation curves.
+
 ## [0.3.7] - 2026-05-08
 
 ### Changed

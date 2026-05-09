@@ -23,6 +23,11 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _rewriteClips;
         private SerializedProperty _seed;
         private SerializedProperty _nameLength;
+        private SerializedProperty _useCustomAlphabet;
+        private SerializedProperty _customChar0;
+        private SerializedProperty _customChar1;
+        private SerializedProperty _customChar2;
+        private SerializedProperty _customChar3;
 
         private bool _showAdvanced;
 
@@ -45,6 +50,11 @@ namespace HateRipper.AvatarObfuscator.Inspector
             _rewriteClips    = _options.FindPropertyRelative(nameof(ObfuscationOptions.rewriteAnimationClips));
             _seed            = _options.FindPropertyRelative(nameof(ObfuscationOptions.seed));
             _nameLength      = _options.FindPropertyRelative(nameof(ObfuscationOptions.generatedNameLength));
+            _useCustomAlphabet = _options.FindPropertyRelative(nameof(ObfuscationOptions.useCustomAlphabet));
+            _customChar0     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar0));
+            _customChar1     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar1));
+            _customChar2     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar2));
+            _customChar3     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar3));
         }
 
         public override void OnInspectorGUI()
@@ -177,10 +187,43 @@ namespace HateRipper.AvatarObfuscator.Inspector
                 if (_showAdvanced)
                 {
                     EditorGUI.indentLevel++;
+                    RightAlignedToggle(_useCustomAlphabet, "Custom Obfuscation Symbols",
+                        "Use a custom set of 4 obfuscation symbols instead of the built-in ÌÍÎÏ alphabet. " +
+                        "The default custom symbols (II, ll, Il, lI) look nearly identical in most fonts.");
+                    using (new EditorGUI.DisabledScope(!_useCustomAlphabet.boolValue))
+                    {
+                        EditorGUI.indentLevel++;
+                        var charRect = EditorGUI.IndentedRect(
+                            EditorGUILayout.GetControlRect(true, EditorGUIUtility.singleLineHeight));
+                        float labelW = 80f;
+                        float boxW = 28f;
+                        float gap = 6f;
+                        var labelRect2 = new Rect(charRect.x, charRect.y, labelW, charRect.height);
+                        EditorGUI.LabelField(labelRect2, new GUIContent("Symbols",
+                            "The 4 characters used to build obfuscated names. Each box holds one character."));
+                        float startX = charRect.x + labelW + 4f;
+                        SerializedProperty[] charProps = { _customChar0, _customChar1, _customChar2, _customChar3 };
+                        int prevIndent = EditorGUI.indentLevel;
+                        EditorGUI.indentLevel = 0;
+                        for (int ci = 0; ci < 4; ci++)
+                        {
+                            var bx = new Rect(startX + ci * (boxW + gap), charRect.y, boxW, charRect.height);
+                            EditorGUI.BeginProperty(bx, GUIContent.none, charProps[ci]);
+                            EditorGUI.BeginChangeCheck();
+                            string val = EditorGUI.TextField(bx, charProps[ci].stringValue);
+                            if (EditorGUI.EndChangeCheck())
+                            {
+                                charProps[ci].stringValue = val.Length > 2 ? val.Substring(0, 2) : val;
+                            }
+                            EditorGUI.EndProperty();
+                        }
+                        EditorGUI.indentLevel = prevIndent;
+                        EditorGUI.indentLevel--;
+                    }
                     EditorGUILayout.PropertyField(_seed, new GUIContent("Seed",
                         "Optional fixed seed for reproducible obfuscation. 0 = random per build."));
                     EditorGUILayout.PropertyField(_nameLength, new GUIContent("Generated Name Length",
-                        "Length of generated obfuscated names. Each character is one of {Ì Í Î Ï} " +
+                        "Length of generated obfuscated names. Each character is one of the 4 symbols " +
                         "(2 bits of entropy), so 24 chars = 48 bits = ~280 trillion unique names."));
                     EditorGUI.indentLevel--;
                 }

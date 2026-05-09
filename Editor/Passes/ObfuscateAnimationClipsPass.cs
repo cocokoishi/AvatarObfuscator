@@ -73,9 +73,20 @@ namespace HateRipper.AvatarObfuscator.Passes
                     }
                 }
 
-                // AvatarMask paths
-                foreach (var layer in ac.layers)
-                    RewriteAvatarMask(context, state, layer.avatarMask);
+                // AvatarMask paths — ac.layers returns a struct-copy array,
+                // so we must read-modify-write the whole array to persist changes.
+                var layers = ac.layers;
+                bool layersDirty = false;
+                for (int li = 0; li < layers.Length; li++)
+                {
+                    var newMask = RewriteAvatarMask(context, state, layers[li].avatarMask);
+                    if (!ReferenceEquals(newMask, layers[li].avatarMask))
+                    {
+                        layers[li].avatarMask = newMask;
+                        layersDirty = true;
+                    }
+                }
+                if (layersDirty) ac.layers = layers;
 
                 // VRC PlayAudio behaviours store a transform path
                 foreach (var beh in AnimatorWalker.AllBehaviours(ac))
@@ -214,7 +225,12 @@ namespace HateRipper.AvatarObfuscator.Passes
 
         private static bool NeedsBindingRewrite(ObfuscationContext state, EditorCurveBinding binding)
         {
-            if (state.PathRenames.TryGetValue(binding.path ?? "", out var newPath) && newPath != binding.path)
+            // B2 fix: null paths must not be coerced to "" — they are internal Unity
+            // placeholders and rewriting them would break the curve.
+            var bindingPath = binding.path;
+            if (bindingPath == null) return false;
+
+            if (state.PathRenames.TryGetValue(bindingPath, out var newPath) && newPath != bindingPath)
                 return true;
             if (binding.propertyName != null
                 && binding.propertyName.StartsWith(BlendShapePropertyPrefix))
@@ -222,10 +238,10 @@ namespace HateRipper.AvatarObfuscator.Passes
                 var bsName = binding.propertyName.Substring(BlendShapePropertyPrefix.Length);
                 // We don't yet know the *new* path for this binding, but the blendshape
                 // map is keyed by current (pre-hierarchy-rename) path. Try both forms.
-                if (state.BlendShapeRenamesByPath.ContainsKey((binding.path ?? "", bsName)))
+                if (state.BlendShapeRenamesByPath.ContainsKey((bindingPath, bsName)))
                     return true;
                 // After hierarchy rename the path may be different; try mapped path.
-                var maybeNewPath = state.MapPath(binding.path ?? "");
+                var maybeNewPath = state.MapPath(bindingPath);
                 if (state.BlendShapeRenamesByPath.ContainsKey((maybeNewPath, bsName)))
                     return true;
             }
@@ -244,14 +260,16 @@ namespace HateRipper.AvatarObfuscator.Passes
 
         private static EditorCurveBinding MapBinding(ObfuscationContext state, EditorCurveBinding binding)
         {
-            var path = state.MapPath(binding.path ?? "");
+            // B2 fix: preserve null paths exactly — never coerce to "".
+            var bindingPath = binding.path;
+            var path = bindingPath != null ? state.MapPath(bindingPath) : null;
             var prop = binding.propertyName;
             if (!string.IsNullOrEmpty(prop) && prop.StartsWith(BlendShapePropertyPrefix))
             {
                 var bsName = prop.Substring(BlendShapePropertyPrefix.Length);
                 // Try (newPath, oldName), then (oldPath, oldName)
-                if (state.BlendShapeRenamesByPath.TryGetValue((path, bsName), out var newName)
-                    || state.BlendShapeRenamesByPath.TryGetValue((binding.path ?? "", bsName), out newName))
+                if (path != null && state.BlendShapeRenamesByPath.TryGetValue((path, bsName), out var newName)
+                    || bindingPath != null && state.BlendShapeRenamesByPath.TryGetValue((bindingPath, bsName), out newName))
                 {
                     prop = BlendShapePropertyPrefix + newName;
                 }
@@ -265,9 +283,14 @@ namespace HateRipper.AvatarObfuscator.Passes
         // ------------------------------------------------------------------
         // AvatarMask
         // ------------------------------------------------------------------
-        private static void RewriteAvatarMask(BuildContext ctx, ObfuscationContext state, AvatarMask mask)
+        /// <summary>
+        /// Rewrites transform paths inside an <see cref="AvatarMask"/> and returns
+        /// the (possibly cloned) mask. The caller is responsible for writing the
+        /// returned mask back into the layer's <c>avatarMask</c> slot.
+        /// </summary>
+        private static AvatarMask RewriteAvatarMask(BuildContext ctx, ObfuscationContext state, AvatarMask mask)
         {
-            if (mask == null) return;
+            if (mask == null) return null;
             if (!ctx.IsTemporaryAsset(mask))
             {
                 // Clone first — masks live on disk too.
@@ -285,6 +308,7 @@ namespace HateRipper.AvatarObfuscator.Passes
                 if (newPath != oldPath)
                     mask.SetTransformPath(i, newPath);
             }
+            return mask;
         }
 
         // ------------------------------------------------------------------

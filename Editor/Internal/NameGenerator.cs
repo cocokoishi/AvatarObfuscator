@@ -27,8 +27,9 @@ namespace HateRipper.AvatarObfuscator.Internal
         // Capital I with grave / acute / circumflex / diaeresis.
         // U+00CC, U+00CD, U+00CE, U+00CF — all 1-codepoint Latin-1 chars.
         // Font-rendered, all four look like a vertical bar with a tiny diacritic.
-        private const string Alphabet = "ÌÍÎÏ"; // ÌÍÎÏ
+        private static readonly string[] DefaultAlphabet = { "Ì", "Í", "Î", "Ï" };
 
+        private readonly string[] _alphabet;
         private readonly System.Random _rng;
         private readonly int _length;
         private readonly HashSet<string> _used = new HashSet<string>();
@@ -36,12 +37,25 @@ namespace HateRipper.AvatarObfuscator.Internal
         /// <summary>Optional fixed prefix to make obfuscated names recognisable in logs.</summary>
         public string Prefix { get; set; } = "";
 
-        public NameGenerator(int seed, int length)
+        /// <summary>
+        /// Creates a new name generator.
+        /// </summary>
+        /// <param name="seed">RNG seed. 0 = non-deterministic.</param>
+        /// <param name="length">Desired name length (minimum clamped to 8).</param>
+        /// <param name="customAlphabet">
+        /// Optional custom alphabet string array. Must have at least 2 distinct characters.
+        /// When null or too short, falls back to the built-in <c>ÌÍÎÏ</c> alphabet.
+        /// </param>
+        public NameGenerator(int seed, int length, string[] customAlphabet = null)
         {
             // 0 means "non-deterministic". We mix in DateTime.Ticks so the seed is
             // both unique per-build and reasonably hard to predict.
             if (seed == 0) seed = unchecked((int)(DateTime.Now.Ticks ^ Environment.TickCount));
             _rng = new System.Random(seed);
+
+            _alphabet = customAlphabet != null && customAlphabet.Length >= 2
+                ? customAlphabet
+                : DefaultAlphabet;
 
             // The alphabet has only 4 symbols, i.e. 2 bits of entropy per char.
             // Bump short user-supplied lengths up so the unique-name pool is big
@@ -56,12 +70,14 @@ namespace HateRipper.AvatarObfuscator.Internal
         public string Next()
         {
             int extra = 0;
+            var sb = new System.Text.StringBuilder();
             for (int attempt = 0; attempt < 1024; attempt++)
             {
                 var len = _length + extra;
-                var buf = new char[len];
-                for (int i = 0; i < len; i++) buf[i] = Alphabet[_rng.Next(Alphabet.Length)];
-                var s = Prefix + new string(buf);
+                sb.Length = 0;
+                sb.Append(Prefix);
+                for (int i = 0; i < len; i++) sb.Append(_alphabet[_rng.Next(_alphabet.Length)]);
+                var s = sb.ToString();
                 if (_used.Add(s)) return s;
 
                 // Out of room at the current length — extend by 1 char (4x the
@@ -72,9 +88,11 @@ namespace HateRipper.AvatarObfuscator.Internal
 
             // Belt-and-braces fallback. We append a high-entropy suffix made of
             // the same alphabet so the name still renders as "all identical I's".
-            var fallback = new char[24];
-            for (int i = 0; i < fallback.Length; i++) fallback[i] = Alphabet[_rng.Next(Alphabet.Length)];
-            var fb = Prefix + new string(fallback) + Guid.NewGuid().ToString("N").Substring(0, 4);
+            sb.Length = 0;
+            sb.Append(Prefix);
+            for (int i = 0; i < 24; i++) sb.Append(_alphabet[_rng.Next(_alphabet.Length)]);
+            sb.Append(Guid.NewGuid().ToString("N").Substring(0, 4));
+            var fb = sb.ToString();
             _used.Add(fb);
             return fb;
         }

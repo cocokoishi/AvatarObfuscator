@@ -44,12 +44,20 @@ namespace HateRipper.AvatarObfuscator.Passes
                 remapUvTextures = src.remapUvTextures,
                 autoMergeSkinnedMesh = src.autoMergeSkinnedMesh,
                 rewriteAnimationClips = src.rewriteAnimationClips,
+                useCustomAlphabet = src.useCustomAlphabet,
+                customChar0 = src.customChar0,
+                customChar1 = src.customChar1,
+                customChar2 = src.customChar2,
+                customChar3 = src.customChar3,
                 seed = src.seed,
                 generatedNameLength = src.generatedNameLength,
             };
 
             state.Enabled = true;
-            state.NameGen = new NameGenerator(state.Options.seed, state.Options.generatedNameLength);
+            state.NameGen = new NameGenerator(
+                state.Options.seed,
+                state.Options.generatedNameLength,
+                state.Options.GetEffectiveAlphabet());
 
             // Now we no longer need the component on the runtime build — strip it so it
             // doesn't ship with the avatar (it's IEditorOnly anyway, but be explicit).
