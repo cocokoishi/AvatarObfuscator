@@ -49,7 +49,7 @@ Older versions contain mysterious bugs.
    Preserve MMD... options are ticked.
 5. Build & Publish. NDMF handles everything at build time on a clone.
    Your scene original is never modified.
-<img width="961" height="925" alt="image" src="https://github.com/user-attachments/assets/2d335c09-5f87-4a77-b822-9062e08bb00c" />
+<img width="950" height="879" alt="image" src="https://github.com/user-attachments/assets/b56b7dfc-9d72-4e3a-ac47-87d4595c65d2" />
 
 ---
 
