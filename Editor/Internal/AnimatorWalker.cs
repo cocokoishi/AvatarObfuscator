@@ -72,6 +72,28 @@ namespace HateRipper.AvatarObfuscator.Internal
                     foreach (var inner in AllBlendTrees(bt))
                         yield return inner;
             }
+
+            // Synced layers can override the motion of any source-layer state with
+            // their own BlendTree (independent from the source state's motion). The
+            // override BlendTree's blendParameter / blendParameterY / children
+            // directBlendParameter must also be subject to parameter rename and
+            // sub-asset name rewrite, so they need to surface through this enumerator.
+            if (controller == null) yield break;
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var layer = layers[i];
+                if (layer.syncedLayerIndex < 0) continue;
+                var src = layers[layer.syncedLayerIndex];
+                if (src.stateMachine == null) continue;
+                foreach (var st in AllStates(src.stateMachine))
+                {
+                    var motion = layer.GetOverrideMotion(st);
+                    if (motion is BlendTree bt)
+                        foreach (var inner in AllBlendTrees(bt))
+                            yield return inner;
+                }
+            }
         }
 
         private static IEnumerable<BlendTree> AllBlendTrees(BlendTree root)
@@ -93,6 +115,27 @@ namespace HateRipper.AvatarObfuscator.Internal
                 foreach (var s in sm.states)
                     foreach (var b in s.state.behaviours)
                         if (b != null) yield return b;
+            }
+
+            // Synced-layer override behaviours: a synced layer can replace the
+            // entire behaviour list on any source-layer state via
+            // SetOverrideBehaviours. Those overrides need parameter rename
+            // (VRCAvatarParameterDriver) and path rewrite (VRC_AnimatorPlayAudio)
+            // applied just like the originals.
+            if (controller == null) yield break;
+            var layers = controller.layers;
+            for (int i = 0; i < layers.Length; i++)
+            {
+                var layer = layers[i];
+                if (layer.syncedLayerIndex < 0) continue;
+                var src = layers[layer.syncedLayerIndex];
+                if (src.stateMachine == null) continue;
+                foreach (var st in AllStates(src.stateMachine))
+                {
+                    var bs = layer.GetOverrideBehaviours(st);
+                    if (bs == null) continue;
+                    foreach (var b in bs) if (b != null) yield return b;
+                }
             }
         }
 

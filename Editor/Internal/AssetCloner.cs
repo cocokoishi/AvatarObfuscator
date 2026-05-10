@@ -137,13 +137,24 @@ namespace HateRipper.AvatarObfuscator.Internal
             var srcLayers = source.layers;
             var dstLayers = new AnimatorControllerLayer[srcLayers.Length];
 
-            // Two-pass: first clone every state-machine so synced layers can resolve.
+            // Controller-wide maps. Promoted from per-SM-local so that transitions
+            // referencing siblings (e.g. a state inside sub-SM-A whose transition
+            // points to sub-SM-B at the same level) can resolve their destinations
+            // — the previous per-CloneStateMachine-local stateMap could only ever
+            // contain its own SM's states, so cross-sibling transitions silently
+            // lost their destination during clone.
             var smMap = new Dictionary<AnimatorStateMachine, AnimatorStateMachine>();
+            var stateMap = new Dictionary<AnimatorState, AnimatorState>();
 
+            // Phase 1: clone every SM + state + sub-SM structurally, no transitions.
+            // After this loop completes, smMap and stateMap know about every SM and
+            // state in every layer of the controller.
             for (int i = 0; i < srcLayers.Length; i++)
             {
                 var src = srcLayers[i];
-                var newSm = src.stateMachine != null ? CloneStateMachine(ctx, src.stateMachine, smMap) : null;
+                var newSm = src.stateMachine != null
+                    ? CloneStateMachine(ctx, src.stateMachine, smMap, stateMap)
+                    : null;
                 dstLayers[i] = new AnimatorControllerLayer
                 {
                     name = src.name,
@@ -158,10 +169,15 @@ namespace HateRipper.AvatarObfuscator.Internal
             }
             copy.layers = dstLayers;
 
-            // Re-apply transition references inside each cloned state machine.
-            // Note: CloneTransitionsTemp is invoked eagerly inside CloneStateMachine
-            // (see below), so by the time we get here every transition has already
-            // been wired through smMap. No additional fix-up is needed.
+            // Phase 2: now that every SM and state is in the maps, clone every
+            // transition. Cross-sibling-SM and cross-state references now resolve.
+            for (int i = 0; i < srcLayers.Length; i++)
+            {
+                var srcSm = srcLayers[i].stateMachine;
+                if (srcSm == null) continue;
+                if (!smMap.TryGetValue(srcSm, out var dstSm)) continue;
+                CloneTransitionsRecursive(srcSm, dstSm, stateMap, smMap);
+            }
 
             // Synced-layer overrides
             for (int i = 0; i < srcLayers.Length; i++)
@@ -205,7 +221,8 @@ namespace HateRipper.AvatarObfuscator.Internal
         }
 
         private static AnimatorStateMachine CloneStateMachine(BuildContext ctx, AnimatorStateMachine src,
-            Dictionary<AnimatorStateMachine, AnimatorStateMachine> smMap)
+            Dictionary<AnimatorStateMachine, AnimatorStateMachine> smMap,
+            Dictionary<AnimatorState, AnimatorState> stateMap)
         {
             if (smMap.TryGetValue(src, out var existing)) return existing;
             var copy = new AnimatorStateMachine
@@ -223,7 +240,6 @@ namespace HateRipper.AvatarObfuscator.Internal
 
             // States
             var srcStates = src.states;
-            var stateMap = new Dictionary<AnimatorState, AnimatorState>();
             var dstStates = new ChildAnimatorState[srcStates.Length];
             for (int i = 0; i < srcStates.Length; i++)
             {
@@ -244,7 +260,7 @@ namespace HateRipper.AvatarObfuscator.Internal
             {
                 dstSubs[i] = new ChildAnimatorStateMachine
                 {
-                    stateMachine = CloneStateMachine(ctx, srcSubs[i].stateMachine, smMap),
+                    stateMachine = CloneStateMachine(ctx, srcSubs[i].stateMachine, smMap, stateMap),
                     position = srcSubs[i].position,
                 };
             }
@@ -261,13 +277,28 @@ namespace HateRipper.AvatarObfuscator.Internal
                 dstBeh[i] = srcBeh[i] != null ? CloneBehaviour(ctx, srcBeh[i]) : null;
             copy.behaviours = dstBeh;
 
-            // Transition cloning is invoked eagerly here. CloneTransitionsTemp
-            // uses the running smMap (which is mutated by recursive
-            // CloneStateMachine calls, so by the time we reach a transition
-            // referencing a sub-SM, that sub-SM has already been cloned).
-            CloneTransitionsTemp(src, copy, stateMap, smMap);
-
+            // Transitions are NOT cloned here. The caller (DeepCloneController)
+            // walks every cloned SM in a second phase, after every layer's SM
+            // tree has been added to smMap/stateMap, so transitions referencing
+            // sibling sub-SMs or states inside sibling sub-SMs can resolve.
             return copy;
+        }
+
+        private static void CloneTransitionsRecursive(AnimatorStateMachine src, AnimatorStateMachine dst,
+            Dictionary<AnimatorState, AnimatorState> stateMap,
+            Dictionary<AnimatorStateMachine, AnimatorStateMachine> smMap)
+        {
+            CloneTransitionsTemp(src, dst, stateMap, smMap);
+
+            var srcSubs = src.stateMachines;
+            var dstSubs = dst.stateMachines;
+            for (int i = 0; i < srcSubs.Length && i < dstSubs.Length; i++)
+            {
+                var srcSub = srcSubs[i].stateMachine;
+                var dstSub = dstSubs[i].stateMachine;
+                if (srcSub == null || dstSub == null) continue;
+                CloneTransitionsRecursive(srcSub, dstSub, stateMap, smMap);
+            }
         }
 
         private static void CloneTransitionsTemp(AnimatorStateMachine src, AnimatorStateMachine dst,

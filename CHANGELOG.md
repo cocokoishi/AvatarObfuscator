@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.9] - 2026-05-10
+
+### Fixed
+- **Synced Layer Override BlendTree / Behaviours Not Obfuscated**: Fixed a bug where the BlendTrees and StateMachineBehaviours assigned via `SetOverrideMotion` / `SetOverrideBehaviours` on a synced layer were never visited by the parameter / behaviour rewrite step. As a result, the cloned controller's parameter table contained obfuscated names while the synced override BlendTree's `blendParameter` (and `blendParameterY`, `directBlendParameter`) still referenced the original plaintext names, causing the BlendTree to silently evaluate to 0 in-game. The same gap also left `VRCAvatarParameterDriver` parameter names and `VRC_AnimatorPlayAudio.SourcePath` paths inside synced override behaviours un-rewritten. Trigger surface is narrow (synced layer + override is a BlendTree or replaces behaviours), but when triggered the upload was silently broken. `AnimatorWalker.AllBlendTrees` and `AllBehaviours` now traverse synced override entries in addition to the source layer's own state.motion / state.behaviours.
+- **Cross-Sibling Sub-State-Machine Transitions Lost During Clone**: Fixed a long-standing bug in `AssetCloner.DeepCloneController` where transitions whose destination is a sibling sub-state-machine — or a state inside a sibling sub-state-machine — were silently dropped during the controller deep-clone. Root cause: `CloneStateMachine` cloned transitions inline at the end of each recursive call, using a per-SM-local `stateMap` and a `smMap` that only contained ancestors and previously-processed siblings. So when sub-SM-A's transitions were cloned, sub-SM-B (a later sibling) had not yet been added to either map, and the `destinationState` / `destinationStateMachine` lookup silently returned null. The cloning is now two-phase: phase 1 walks every layer's SM tree and registers every SM and state into controller-wide maps, phase 2 walks the trees again and clones every transition with full visibility of every destination. Trigger surface is narrow (nested state machines with cross-sibling transitions), but when present the affected transitions never fired in-game.
+
 ## [0.3.8] - 2026-05-09
 
 ### Added
