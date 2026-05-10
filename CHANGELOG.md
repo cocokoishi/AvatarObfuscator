@@ -2,6 +2,11 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.10] - 2026-05-10
+
+### Fixed
+- **`VRC_AnimatorPlayAudio.ParameterName` Not Obfuscated**: Fixed a bug where the `ParameterName` field on `VRC_AnimatorPlayAudio` state-machine behaviours was never rewritten. When `PlaybackOrder` is set to `Order.Parameter`, this field names the int animator parameter that selects which clip to play. Because the rename pass touched the controller's parameter table but never visited `ParameterName`, the cloned controller had renamed parameters while the behaviour still pointed at the original plaintext name. At runtime, VRChat wrote the new (obfuscated) parameter and the behaviour read the old name — never resolved — so clip selection silently fell back to the first/random clip and parameter-driven audio switching stopped working. Trigger surface is narrow (only avatars that use Parameter playback order), but when present the build behaved differently from the source.
+
 ## [0.3.9] - 2026-05-10
 
 ### Fixed

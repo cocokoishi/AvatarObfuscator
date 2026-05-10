@@ -471,8 +471,15 @@ namespace HateRipper.AvatarObfuscator.Passes
                             p.source = state.MapParameter(p.source);
                     }
                     break;
-                case VRC.SDKBase.VRC_AnimatorPlayAudio _:
-                    // Holds a transform path; rewritten in the hierarchy pass.
+                case VRC.SDKBase.VRC_AnimatorPlayAudio playAudio:
+                    // SourcePath is a transform path, rewritten in the animation pass.
+                    // ParameterName is an int animator parameter that selects which audio
+                    // clip to play when PlaybackOrder == Order.Parameter — must follow the
+                    // parameter rename or the cloned controller's renamed parameter and
+                    // the behaviour's stale ParameterName disagree, and clip selection
+                    // silently falls back to the first clip in-game.
+                    if (!string.IsNullOrEmpty(playAudio.ParameterName))
+                        playAudio.ParameterName = state.MapParameter(playAudio.ParameterName);
                     break;
             }
 #endif
