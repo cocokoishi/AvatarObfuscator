@@ -213,13 +213,13 @@ namespace HateRipper.AvatarObfuscator.Passes
                 newClip.SetCurve(padPath, typeof(GameObject), "m_IsActive",
                     AnimationCurve.Constant(clip.length, clip.length, 1f));
             }
+            clipMap[clip] = newClip;
 
             var settings = AnimationUtility.GetAnimationClipSettings(clip);
             if (settings.additiveReferencePoseClip != null)
                 settings.additiveReferencePoseClip = RewriteClip(ctx, state, settings.additiveReferencePoseClip, clipMap);
             AnimationUtility.SetAnimationClipSettings(newClip, settings);
 
-            clipMap[clip] = newClip;
             return newClip;
         }
 
