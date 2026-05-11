@@ -55,6 +55,21 @@ namespace HateRipper.AvatarObfuscator.Passes
             // Rewrite each clip
             foreach (var ac in controllers)
             {
+                // Safety: every mutation below (state.motion, layer.SetOverrideMotion,
+                // ac.layers, RewriteBehaviourPaths) writes back to the controller
+                // asset or its sub-assets. We MUST only do this on controllers we
+                // have cloned — otherwise the user's source .controller on disk is
+                // silently modified.
+                //
+                // In the default config (obfuscateParameters = true), every
+                // reachable controller has been turned into a temp clone by
+                // ObfuscateParametersPass already, so this guard is a no-op. The
+                // guard only kicks in when the user has explicitly disabled
+                // parameter obfuscation while still enabling other renames — in
+                // that case we prefer "partial obfuscation but project safe" over
+                // "complete obfuscation but project corrupted".
+                if (ac == null || !context.IsTemporaryAsset(ac)) continue;
+
                 foreach (var state2 in AnimatorWalker.AllStates(ac))
                     state2.motion = MapMotion(context, state, state2.motion, clipMap);
 
@@ -195,6 +210,10 @@ namespace HateRipper.AvatarObfuscator.Passes
                             keyframes[i].value = state.MapMaterial(m);
                         else if (keyframes[i].value is Mesh mesh)
                             keyframes[i].value = state.MapMesh(mesh);
+                        else if (keyframes[i].value is Texture2D tex)
+                            keyframes[i].value = state.MapTexture(tex);
+                        else if (keyframes[i].value is AudioClip audio)
+                            keyframes[i].value = state.MapAudio(audio);
                     }
                 }
                 AnimationUtility.SetObjectReferenceCurve(newClip, newBinding, keyframes);
@@ -253,8 +272,16 @@ namespace HateRipper.AvatarObfuscator.Passes
             var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
             if (keys == null) return false;
             foreach (var k in keys)
+            {
                 if (k.value is Material m && state.MaterialReplacements.ContainsKey(m))
                     return true;
+                if (k.value is Mesh mesh && state.MeshReplacements.ContainsKey(mesh))
+                    return true;
+                if (k.value is Texture2D tex && state.TextureReplacements.ContainsKey(tex))
+                    return true;
+                if (k.value is AudioClip audio && state.AudioReplacements.ContainsKey(audio))
+                    return true;
+            }
             return false;
         }
 

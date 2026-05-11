@@ -71,6 +71,28 @@ namespace HateRipper.AvatarObfuscator
                  "VRChat proxy animations are kept untouched (they are referenced by name).")]
         public bool obfuscateAnimationClipNames = true;
 
+        [Tooltip("Rename Material asset names. Materials referenced by renderers are cloned (the user's " +
+                 "source .mat asset is NEVER modified) and the clone is renamed. Animation clip object-" +
+                 "reference curves are redirected to the cloned materials automatically. Safe — Unity " +
+                 "does not look up materials by name at runtime; shader keywords and properties are " +
+                 "preserved by Object.Instantiate.")]
+        public bool obfuscateMaterialAssetNames = true;
+
+        [Tooltip("Rename Texture2D asset names. Textures referenced by materials are cloned (the user's " +
+                 "source .png/.jpg/.tga import is NEVER modified) and the clone is renamed. The owning " +
+                 "materials are also cloned so the texture reference can be redirected without mutating " +
+                 "the user's material asset. Only Texture2D is handled — Cubemap, RenderTexture, " +
+                 "Texture3D and Texture2DArray are left untouched.")]
+        public bool obfuscateTextureAssetNames = true;
+
+        [Tooltip("Rename AudioClip asset names. AudioClips referenced by AudioSource.clip and " +
+                 "VRC_AnimatorPlayAudio.Clips are cloned (the user's source .wav/.ogg/.mp3 import is " +
+                 "NEVER modified) and the clone is renamed. Animation clip object-reference curves that " +
+                 "animate AudioSource.clip are also redirected.\n\n" +
+                 "If you have third-party scripts that look up audio clips by name (very rare), keep " +
+                 "this OFF — Unity itself never does such lookups.")]
+        public bool obfuscateAudioClipAssetNames = true;
+
         [Header("Texture")]
         [Tooltip("For every Texture2D on every material, generate a byte-different copy by " +
                  "rearranging UV islands in lockstep on both the texture pixels and the mesh UVs " +

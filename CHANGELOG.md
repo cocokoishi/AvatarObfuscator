@@ -2,6 +2,23 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.3.11] - 2026-05-11
+
+### Added
+- **Material / Texture / AudioClip Asset Name Obfuscation**: Three independent toggles in the inspector (under a new "Material / Texture / Audio" section) now obfuscate the asset names on Materials referenced by renderers, Texture2D assets referenced by those materials, and AudioClips referenced by AudioSource.clip / VRC_AnimatorPlayAudio.Clips. All three default ON.
+  - Each referenced asset is **cloned into a temporary build-time copy** before its `.name` field is rewritten — the user's source `.mat` / `.png` / `.wav` files on disk are never touched. The clones are saved through NDMF's `BuildContext.AssetSaver`, and every reference site (renderer materials, material texture properties, AudioSource.clip, VRC_AnimatorPlayAudio.Clips, animation clip object-reference curves) is redirected to the clone before the bundle is built.
+  - **Materials** are deep-cloned via `Object.Instantiate` (TexTransTool's pattern), so lilToon / Poiyomi / Material Variant serialized state survives the clone intact. The clone is detached from any Material Variant parent (Unity 2022.1+).
+  - **Texture2D** clones preserve format / mip chain / sRGB / wrap+filter modes. Cubemaps, RenderTextures, Texture3Ds and Texture2DArrays are passed through untouched — only Texture2D is handled.
+  - **AudioClip** clones go through an explicit `GetData` → `AudioClip.Create` → `SetData` round-trip rather than `Object.Instantiate`, because `Instantiate` on AudioClip can produce a clone with zero samples after a domain reload. For uncompressed sources this is identical bytes; for Vorbis / MP3-compressed sources the bundle grows because the PCM round-trip removes the compression. Streaming clips that can't satisfy `GetData` are skipped with a warning, and the original AudioClip continues to play (just keeps its original name).
+- **"Contact me" foldout** under the Advanced section in the inspector, collapsed by default. Holds the project / author links. The always-visible footer that used to live at the bottom of the inspector has been removed in favour of this single canonical location.
+
+### Fixed
+- **Pre-existing Latent Bug: Animation Clip Pass Could Mutate User Controllers**: The animation clip rewrite pass walked controllers reached through `VRCAvatarDescriptor.baseAnimationLayers` / `specialAnimationLayers` / `Animator.runtimeAnimatorController` and mutated `state.motion`, `layer.SetOverrideMotion`, `ac.layers` and behaviour `SourcePath` on whatever it found. When `obfuscateParameters` was on (the default) this was fine because `ObfuscateParametersPass` had already cloned every reachable controller into a temporary asset, but if the user explicitly disabled parameter obfuscation while keeping any of the rename options on, the pass would silently write into the user's source `.controller` asset on disk. The pass now skips any controller that is not `BuildContext.IsTemporaryAsset` — the trade-off is "partial obfuscation when parameter obfuscation is off" rather than "complete obfuscation but project corrupted". The same guard is applied to the new shared-assets pass's `VRC_AnimatorPlayAudio.Clips` rewrite and to the finalize pass's audio-rename loop.
+
+### Changed
+- The `MaterialReplacements` dictionary used to be the only canonical map for "material we have cloned". It is now joined by `TextureReplacements` and `AudioReplacements` on the shared `ObfuscationContext`, with matching `MapTexture` / `MapAudio` helpers. `ObfuscateAnimationClipsPass` now also redirects `Texture2D` and `AudioClip` values inside animation clip object-reference curves through these maps; the previous behaviour only remapped `Material` and `Mesh`. `ObjectCurveNeedsRewrite` has been widened so clips that only reference renamed textures or audio still get cloned and rewritten.
+- A new pipeline pass `ObfuscateSharedAssetsPass` runs between `ObfuscateHierarchyPass` and `ObfuscateAnimationClipsPass`. It performs the cloning + reference-rewiring work described above and is a no-op when all three new toggles are off.
+
 ## [0.3.10] - 2026-05-10
 
 ### Fixed

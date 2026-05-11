@@ -66,12 +66,21 @@ namespace HateRipper.AvatarObfuscator
                 //    that stores a transform path as a string.
                 .Then.Run(ObfuscateHierarchyPass.Instance)
 
-                // 7. Now that the GameObject tree, blendshape names and material
+                // 7. Clone Material / Texture2D / AudioClip assets the user wants
+                //    renamed, registering replacements in MaterialReplacements /
+                //    TextureReplacements / AudioReplacements so the animation-clip
+                //    pass below can redirect object-reference curves. The clones
+                //    keep their original names here; FinalizeAssetsPass renames
+                //    them last so the rename never bleeds into intermediate logs.
+                .Then.Run(ObfuscateSharedAssetsPass.Instance)
+
+                // 8. Now that the GameObject tree, blendshape names and material
                 //    references are all in their final form, rewrite every reachable
                 //    AnimationClip in one place.
                 .Then.Run(ObfuscateAnimationClipsPass.Instance)
 
-                // 8. Last: rename mesh / controller / clip / mask asset names.
+                // 9. Last: rename mesh / controller / clip / mask / material /
+                //    texture / audio asset names.
                 .Then.Run(FinalizeAssetsPass.Instance);
         }
 

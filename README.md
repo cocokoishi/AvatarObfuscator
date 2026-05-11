@@ -30,7 +30,7 @@ that VRChat itself uses internally.
 **Download the latest `.unitypackage` from
 [Releases](https://github.com/cocokoishi/AvatarObfuscator/releases).**
 
-The current version is **v0.3.10**. Only this version is recommended.
+The current version is **v0.3.11**. Only this version is recommended.
 Older versions contain mysterious bugs.
 
 1. Drag the `.unitypackage` into your Unity project. It lands in
@@ -59,11 +59,18 @@ Older versions contain mysterious bugs.
 - **All GameObject names**, everywhere under the avatar root.
 - **All animator controllers**, their internal parameters, and the
   corresponding VRC Parameters.
+- **Material / Texture2D / AudioClip asset names.** Each referenced asset
+  is cloned into a temporary build-time copy so your source `.mat` /
+  `.png` / `.wav` files on disk are never modified. The clones get
+  homoglyph names, and every reference site (renderer materials, material
+  textures, AudioSource.clip, VRC_AnimatorPlayAudio.Clips, animation clip
+  object-reference curves) is redirected to the clones automatically.
 - **Some asset file names** — meshes, animation clips, and more.
 
 ## What we do NOT obfuscate
 
-- Textures, shaders, and everything else not listed above.
+- Shaders, Cubemaps, RenderTextures, Texture3Ds, Texture2DArrays — anything
+  not in the list above.
 - VRChat reserved parameters.
 - The head mesh and its blendshapes (needed by MMD worlds).
 - **Parameters whose name contains a user-configured substring.** The

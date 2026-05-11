@@ -18,6 +18,9 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _preserveMmdBody;
         private SerializedProperty _meshAssets;
         private SerializedProperty _clipNames;
+        private SerializedProperty _materialNames;
+        private SerializedProperty _textureNames;
+        private SerializedProperty _audioNames;
         private SerializedProperty _remapUv;
         private SerializedProperty _autoMergeMesh;
         private SerializedProperty _rewriteClips;
@@ -30,6 +33,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _customChar3;
 
         private bool _showAdvanced;
+        private bool _showContactMe;
 
         private void OnEnable()
         {
@@ -45,6 +49,9 @@ namespace HateRipper.AvatarObfuscator.Inspector
             _preserveMmdBody = _options.FindPropertyRelative(nameof(ObfuscationOptions.preserveMmdBodyObject));
             _meshAssets      = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateMeshAssetNames));
             _clipNames       = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateAnimationClipNames));
+            _materialNames   = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateMaterialAssetNames));
+            _textureNames    = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateTextureAssetNames));
+            _audioNames      = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscateAudioClipAssetNames));
             _remapUv         = _options.FindPropertyRelative(nameof(ObfuscationOptions.remapUvTextures));
             _autoMergeMesh   = _options.FindPropertyRelative(nameof(ObfuscationOptions.autoMergeSkinnedMesh));
             _rewriteClips    = _options.FindPropertyRelative(nameof(ObfuscationOptions.rewriteAnimationClips));
@@ -132,6 +139,26 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "When the MMD body mesh is detected, keep the GameObject name so MMD worlds can find it.");
                     EditorGUI.indentLevel--;
                 }
+
+                EditorGUILayout.Space();
+                Section("Material / Texture / Audio");
+                RightAlignedToggle(_materialNames, "Material Asset Names",
+                    "Clone every Material referenced by renderers and rename the clone. The user's " +
+                    "source .mat asset is never modified. Animation clip object-reference curves are " +
+                    "redirected to the cloned materials automatically. Safe — Unity does not look up " +
+                    "materials by name at runtime.");
+                RightAlignedToggle(_textureNames, "Texture Asset Names",
+                    "Clone every Texture2D referenced by materials and rename the clone. Only Texture2D " +
+                    "is handled — Cubemap, RenderTexture, Texture3D and Texture2DArray are passed through " +
+                    "untouched. When this is ON, the owning materials are also cloned (without renaming, " +
+                    "unless 'Material Asset Names' is also ON) so the texture pointer can be swapped " +
+                    "without mutating your .mat asset.");
+                RightAlignedToggle(_audioNames, "AudioClip Asset Names",
+                    "Clone every AudioClip referenced by AudioSource.clip and VRC_AnimatorPlayAudio.Clips, " +
+                    "and rename the clone. The clone holds the same PCM samples as the source — for " +
+                    "uncompressed sources this is identical bytes; for Vorbis/MP3-compressed sources the " +
+                    "bundle grows because the PCM round-trip removes the compression. Turn OFF if bundle " +
+                    "size matters more than name obfuscation for your audio.");
 
                 // [Hidden] Texture obfuscation and Mesh Merge UI — features are not
                 // production-ready. Backend logic is preserved; only the inspector
@@ -225,37 +252,34 @@ namespace HateRipper.AvatarObfuscator.Inspector
                     EditorGUILayout.PropertyField(_nameLength, new GUIContent("Generated Name Length",
                         "Length of generated obfuscated names. Each character is one of the 4 symbols " +
                         "(2 bits of entropy), so 24 chars = 48 bits = ~280 trillion unique names."));
+
+                    EditorGUILayout.Space();
+                    _showContactMe = EditorGUILayout.Foldout(_showContactMe, "Contact me", true);
+                    if (_showContactMe)
+                    {
+                        EditorGUI.indentLevel++;
+                        if (GUILayout.Button("Project: " + AvatarObfuscator.ProjectUrl, EditorStyles.linkLabel))
+                            Application.OpenURL(AvatarObfuscator.ProjectUrl);
+                        if (GUILayout.Button("Author: " + AvatarObfuscator.AuthorUrl, EditorStyles.linkLabel))
+                            Application.OpenURL(AvatarObfuscator.AuthorUrl);
+                        EditorGUI.indentLevel--;
+                    }
                     EditorGUI.indentLevel--;
                 }
             }
 
             // ----------------------------------------------------------------
-            // Project / author footer.
+            // Footer links live exclusively under Advanced → Contact me now;
+            // the always-visible duplicate at the bottom has been removed to
+            // keep the inspector tidy for users who don't need it.
             // ----------------------------------------------------------------
-            EditorGUILayout.Space();
-            DrawFooterLinks();
 
             serializedObject.ApplyModifiedProperties();
-        }
 
-        private static void DrawFooterLinks()
-        {
-            var rect = EditorGUILayout.GetControlRect(false, 1);
-            rect.height = 1;
-            EditorGUI.DrawRect(rect, new Color(0.5f, 0.5f, 0.5f, 0.3f));
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Project", EditorStyles.miniLabel, GUILayout.Width(60));
-                if (GUILayout.Button(AvatarObfuscator.ProjectUrl, EditorStyles.linkLabel))
-                    Application.OpenURL(AvatarObfuscator.ProjectUrl);
-            }
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField("Author", EditorStyles.miniLabel, GUILayout.Width(60));
-                if (GUILayout.Button(AvatarObfuscator.AuthorUrl, EditorStyles.linkLabel))
-                    Application.OpenURL(AvatarObfuscator.AuthorUrl);
-            }
+            EditorGUILayout.Space();
+            EditorGUILayout.HelpBox(
+                "Please keep the default options, otherwise the obfuscated avatar may not work.",
+                MessageType.Warning);
         }
 
         // ------------------------------------------------------------------

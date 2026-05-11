@@ -64,6 +64,23 @@ namespace HateRipper.AvatarObfuscator.Internal
         public readonly Dictionary<Mesh, Mesh> MeshReplacements = new Dictionary<Mesh, Mesh>();
 
         // ------------------------------------------------------------------
+        // Texture replacements (ObfuscateSharedAssetsPass writes here when the
+        // user enables texture name obfuscation. UVTextureRemapper's rearranged
+        // textures are NOT registered here — those go through MaterialReplacements
+        // because the rearranged texture is meaningless without its remapped UVs.)
+        // ------------------------------------------------------------------
+        /// <summary>Original Texture2D -> renamed clone (same pixel data, new asset name).</summary>
+        public readonly Dictionary<Texture2D, Texture2D> TextureReplacements = new Dictionary<Texture2D, Texture2D>();
+
+        // ------------------------------------------------------------------
+        // AudioClip replacements (ObfuscateSharedAssetsPass writes here when the
+        // user enables audio name obfuscation; ObfuscateAnimationClipsPass reads it
+        // to redirect AudioSource.clip object-reference curves.)
+        // ------------------------------------------------------------------
+        /// <summary>Original AudioClip -> renamed clone (same audio data, new asset name).</summary>
+        public readonly Dictionary<AudioClip, AudioClip> AudioReplacements = new Dictionary<AudioClip, AudioClip>();
+
+        // ------------------------------------------------------------------
         // Helpers
         // ------------------------------------------------------------------
         // Cached parsed form of Options.skipParametersContaining. Lazily built on
@@ -118,6 +135,18 @@ namespace HateRipper.AvatarObfuscator.Internal
         {
             if (original == null) return null;
             return MeshReplacements.TryGetValue(original, out var replacement) ? replacement : original;
+        }
+
+        public Texture2D MapTexture(Texture2D original)
+        {
+            if (original == null) return null;
+            return TextureReplacements.TryGetValue(original, out var replacement) ? replacement : original;
+        }
+
+        public AudioClip MapAudio(AudioClip original)
+        {
+            if (original == null) return null;
+            return AudioReplacements.TryGetValue(original, out var replacement) ? replacement : original;
         }
 
         public string MapPath(string original)

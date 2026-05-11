@@ -5,6 +5,7 @@ using nadena.dev.ndmf;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.Rendering;
 #if FR_OBF_VRCSDK3_AVATARS
 using VRC.SDK3.Avatars.Components;
 #endif
@@ -113,6 +114,93 @@ namespace HateRipper.AvatarObfuscator.Passes
                         mask.name = state.NameGen.Next();
                     }
                 }
+            }
+
+            // ----------------------------------------------------------------
+            // Material / Texture2D / AudioClip asset names.
+            //
+            // Each pass below renames clones produced by ObfuscateSharedAssetsPass
+            // (or earlier passes like RemapUVTexturePass) — they are temporary
+            // assets we own, so renaming their .name field never leaks into the
+            // user's project. Non-temporary assets are deliberately skipped: if
+            // ObfuscateSharedAssetsPass did not run (toggle off) or skipped a
+            // particular asset (clone failure, e.g. exotic Texture type), the
+            // asset retains its original name and the avatar continues to work.
+            // ----------------------------------------------------------------
+            if (state.Options.obfuscateMaterialAssetNames)
+            {
+                var seenMats = new HashSet<Material>();
+                foreach (var r in context.AvatarRootObject.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null || r.sharedMaterials == null) continue;
+                    foreach (var mat in r.sharedMaterials)
+                    {
+                        if (mat == null || !seenMats.Add(mat)) continue;
+                        if (!context.IsTemporaryAsset(mat)) continue;
+                        mat.name = state.NameGen.Next();
+                    }
+                }
+            }
+
+            if (state.Options.obfuscateTextureAssetNames)
+            {
+                var seenTex = new HashSet<Texture2D>();
+                foreach (var r in context.AvatarRootObject.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (r == null || r.sharedMaterials == null) continue;
+                    foreach (var mat in r.sharedMaterials)
+                    {
+                        if (mat == null || mat.shader == null) continue;
+                        int propCount = mat.shader.GetPropertyCount();
+                        for (int p = 0; p < propCount; p++)
+                        {
+                            if (mat.shader.GetPropertyType(p) != ShaderPropertyType.Texture) continue;
+                            var tex = mat.GetTexture(mat.shader.GetPropertyName(p));
+                            if (!(tex is Texture2D t2d) || !seenTex.Add(t2d)) continue;
+                            if (!context.IsTemporaryAsset(t2d)) continue;
+                            t2d.name = state.NameGen.Next();
+                        }
+                    }
+                }
+            }
+
+            if (state.Options.obfuscateAudioClipAssetNames)
+            {
+                var seenAudio = new HashSet<AudioClip>();
+                // AudioSource.clip references
+                foreach (var src in context.AvatarRootObject.GetComponentsInChildren<AudioSource>(true))
+                {
+                    if (src == null) continue;
+                    var clip = src.clip;
+                    if (clip == null || !seenAudio.Add(clip)) continue;
+                    if (!context.IsTemporaryAsset(clip)) continue;
+                    clip.name = state.NameGen.Next();
+                }
+#if FR_OBF_VRCSDK3_AVATARS
+                // VRC_AnimatorPlayAudio.Clips references on every reachable controller.
+                // A VRC_AnimatorPlayAudio is a sub-asset of its owning controller, so
+                // we walk it via the controller. The clip-level IsTemporaryAsset guard
+                // below is the actual safety net (we never rename a non-temp clip),
+                // but skipping non-temp controllers here is a defensive double-check
+                // and also avoids walking enormous controller trees we cannot touch.
+                foreach (var ac in controllers)
+                {
+                    if (ac == null || !context.IsTemporaryAsset(ac)) continue;
+                    foreach (var beh in AnimatorWalker.AllBehaviours(ac))
+                    {
+                        if (!(beh is VRC.SDKBase.VRC_AnimatorPlayAudio play)) continue;
+                        var clips = play.Clips;
+                        if (clips == null) continue;
+                        for (int i = 0; i < clips.Length; i++)
+                        {
+                            var clip = clips[i];
+                            if (clip == null || !seenAudio.Add(clip)) continue;
+                            if (!context.IsTemporaryAsset(clip)) continue;
+                            clip.name = state.NameGen.Next();
+                        }
+                    }
+                }
+#endif
             }
         }
 
