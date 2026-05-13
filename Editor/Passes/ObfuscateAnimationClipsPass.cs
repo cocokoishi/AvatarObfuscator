@@ -244,6 +244,17 @@ namespace HateRipper.AvatarObfuscator.Passes
 
         private static bool NeedsBindingRewrite(ObfuscationContext state, EditorCurveBinding binding)
         {
+            // Animator parameter curves: binding.type == Animator, propertyName is
+            // the parameter name (path is usually ""). When ObfuscateParametersPass
+            // renames a parameter, any clip that drives it via an Animator curve
+            // must also have that curve's propertyName updated, otherwise the clip
+            // writes to the old name while the controller/BlendTree read the new one.
+            if (binding.type == typeof(Animator)
+                && !string.IsNullOrEmpty(binding.propertyName)
+                && state.ParameterRenames.TryGetValue(binding.propertyName, out var renamedParam)
+                && renamedParam != binding.propertyName)
+                return true;
+
             // B2 fix: null paths must not be coerced to "" — they are internal Unity
             // placeholders and rewriting them would break the curve.
             var bindingPath = binding.path;
@@ -291,7 +302,17 @@ namespace HateRipper.AvatarObfuscator.Passes
             var bindingPath = binding.path;
             var path = bindingPath != null ? state.MapPath(bindingPath) : null;
             var prop = binding.propertyName;
-            if (!string.IsNullOrEmpty(prop) && prop.StartsWith(BlendShapePropertyPrefix))
+
+            // Animator parameter curves: rename the parameter so it stays in sync
+            // with the controller's renamed parameter table. PhysBone-suffix forms
+            // (e.g. "Hair_IsGrabbed") are already populated into ParameterRenames
+            // by ObfuscateParametersPass when the suffixed name appears in the
+            // controller's parameter list, so MapParameter handles them uniformly.
+            if (binding.type == typeof(Animator) && !string.IsNullOrEmpty(prop))
+            {
+                prop = state.MapParameter(prop);
+            }
+            else if (!string.IsNullOrEmpty(prop) && prop.StartsWith(BlendShapePropertyPrefix))
             {
                 var bsName = prop.Substring(BlendShapePropertyPrefix.Length);
                 // Try (newPath, oldName), then (oldPath, oldName)

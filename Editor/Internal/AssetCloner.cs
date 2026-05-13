@@ -431,17 +431,15 @@ namespace HateRipper.AvatarObfuscator.Internal
 
         private static BlendTree CloneBlendTree(BuildContext ctx, BlendTree src)
         {
-            var copy = new BlendTree
-            {
-                name = src.name,
-                hideFlags = HideFlags.HideInHierarchy,
-                blendType = src.blendType,
-                blendParameter = src.blendParameter,
-                blendParameterY = src.blendParameterY,
-                minThreshold = src.minThreshold,
-                maxThreshold = src.maxThreshold,
-                useAutomaticThresholds = src.useAutomaticThresholds,
-            };
+            // Use Object.Instantiate so all Unity-internal serialised fields
+            // (including those not exposed via public C# API, and any fields
+            // Unity may add in future versions) are preserved bit-for-bit.
+            // We still walk children explicitly below to ensure nested
+            // BlendTrees go through AssetSaver/ObjectRegistry — the children
+            // Instantiate auto-clones become unreachable and are GC'd.
+            var copy = Object.Instantiate(src);
+            copy.name = src.name;
+            copy.hideFlags = HideFlags.HideInHierarchy;
             ctx.AssetSaver.SaveAsset(copy);
             ObjectRegistry.RegisterReplacedObject(src, copy);
 
