@@ -68,14 +68,60 @@ namespace HateRipper.AvatarObfuscator.Inspector
         {
             serializedObject.Update();
 
-            EditorGUILayout.LabelField("Avatar Obfuscator (NDMF)", EditorStyles.boldLabel);
-            EditorGUILayout.HelpBox(
-                "Non-destructive. Runs at upload / play, on the cloned avatar that NDMF gives us. " +
-                "Removing this component fully reverts the build.\n\n" +
-                "Recommended pipeline placement: AFTER Avatar Optimizer / TexTransTool / Modular Avatar.",
-                MessageType.None);
+            // --- Logo header ---
+            var logoRect = EditorGUILayout.GetControlRect(false, 54);
+            EditorGUI.DrawRect(logoRect, new Color(0.08f, 0.1f, 0.16f, 0.92f));
+            EditorGUI.DrawRect(new Rect(logoRect.x, logoRect.yMax - 1, logoRect.width, 1),
+                new Color(0.3f, 0.6f, 1f, 0.4f));
 
-            EditorGUILayout.Space();
+            // Badge
+            var badgeRect = new Rect(logoRect.x + 6, logoRect.y + 6, 42, 42);
+            EditorGUI.DrawRect(badgeRect, new Color(0.12f, 0.22f, 0.38f, 0.8f));
+            var badgeStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 20, alignment = TextAnchor.MiddleCenter };
+            badgeStyle.normal.textColor = new Color(0.5f, 0.85f, 1f);
+            EditorGUI.LabelField(badgeRect, "AO", badgeStyle);
+
+            // Title
+            var titleStyle = new GUIStyle(EditorStyles.boldLabel) { fontSize = 16 };
+            titleStyle.normal.textColor = Color.white;
+            EditorGUI.LabelField(new Rect(logoRect.x + 54, logoRect.y + 5, logoRect.width - 60, 24),
+                "Avatar Obfuscator", titleStyle);
+
+            // Version (top-right)
+            var verStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, alignment = TextAnchor.UpperRight };
+            verStyle.normal.textColor = new Color(0.4f, 0.6f, 0.8f, 0.6f);
+            EditorGUI.LabelField(new Rect(logoRect.x + logoRect.width - 54, logoRect.y + 7, 48, 14),
+                "v0.4.0", verStyle);
+
+            // Subtitle (short, always visible)
+            var subStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 10, wordWrap = true };
+            subStyle.normal.textColor = new Color(0.5f, 0.75f, 1f, 0.65f);
+            var shortLabel = "Non-destructive avatar protection for VRChat.";
+            var subContent = new GUIContent(shortLabel);
+            var subHeight = subStyle.CalcHeight(subContent, logoRect.width - 60);
+            if (subHeight < 16) subHeight = 16;
+            EditorGUI.LabelField(new Rect(logoRect.x + 54, logoRect.y + 30, logoRect.width - 60, subHeight),
+                shortLabel, subStyle);
+
+            // Hover tooltip — invisible label captures mouse, shows red text below banner
+            var tipText = "I hate rippers and hackers so i do this to confuse them. Just add a passcode prefab to prevent hotswap.";
+            GUI.Label(logoRect, new GUIContent("", tipText));
+            if (!string.IsNullOrEmpty(GUI.tooltip))
+            {
+                var tipStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, wordWrap = true };
+                tipStyle.normal.textColor = Color.red;
+
+                var tipContent = new GUIContent(tipText);
+                var tipWidth = logoRect.width - 12;
+                var tipHeight = tipStyle.CalcHeight(tipContent, tipWidth);
+
+                var tipBgRect = new Rect(logoRect.x + 6, logoRect.yMax + 3, tipWidth, tipHeight + 6);
+                EditorGUI.DrawRect(tipBgRect, new Color(0.08f, 0.08f, 0.08f, 0.95f));
+                EditorGUI.LabelField(new Rect(tipBgRect.x + 3, tipBgRect.y + 3, tipWidth - 6, tipHeight),
+                    tipText, tipStyle);
+            }
+
+            EditorGUILayout.Space(EditorGUIUtility.singleLineHeight);
 
             RightAlignedToggle(_enabled, "Enable Obfuscation",
                 "Master switch. When off, the plugin behaves as if the component were absent.");
@@ -94,13 +140,10 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "Rename the parameter entries in the VRC Expression Parameters list and rewrite " +
                         "the parameter references inside the Expression Menu. The user-visible labels in " +
                         "the menu are kept — only the parameter names they reference are renamed.");
-                    RightAlignedToggle(_flattenStates, "Flatten State Positions (USELESS)",
-                        "Move every state, sub-state-machine and Entry / Exit / Any State / parent-link " +
-                        "node onto position (0, 0, 0) in every animator state machine. The Animator " +
-                        "window then shows an unreadable pile of overlapping nodes — a ripper trying to " +
-                        "reverse-engineer your avatar's logic loses all visual layout cues.\n\n" +
-                        "Position values are pure editor-only cosmetic data; runtime behaviour is " +
-                        "completely unchanged. Safe to leave on.");
+                    // [Hidden] Flatten State Positions — disabled from the inspector.
+                    // Backend logic is preserved; only the UI control is suppressed.
+                    // RightAlignedToggle(_flattenStates, "Flatten State Positions (USELESS)",
+                    //     "Move every state, ...");
                     EditorGUILayout.PropertyField(_skipParams, new GUIContent("Skip Parameters Containing",
                         "Comma-separated substrings (case-sensitive). Parameter names that CONTAIN any of " +
                         "these stay plaintext, in addition to VRChat built-ins. Use this for face-tracking " +

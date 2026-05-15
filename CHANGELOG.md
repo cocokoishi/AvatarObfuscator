@@ -2,6 +2,12 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.4.0] - 2026-05-15
+
+### Changed
+- **Inspector Logo Header**: Replaced the plain `EditorGUILayout.LabelField` title and `HelpBox` with a styled logo banner featuring an "AO" badge, project title, subtitle, and version number (v0.4.0) in the top-right corner.
+- **Flatten State Positions**: Hidden from the inspector UI. The backend logic and serialized property bindings are fully preserved; only the inspector toggle is suppressed.
+
 ## [0.3.12] - 2026-05-13
 
 - Fix blendtree bugs. Some people report that blendtree may function wrong after obfuscation. I am deeply sorry for your inconvenience. Now it is completely fixed. 具体而言是傻逼deepseek写了前面忘后面，写了一坨屎出来，我把他修好了。这个bug神奇的是短的blendtree可能不能出错，但是长的就概率直线上升，导致我根本没测试出来。
