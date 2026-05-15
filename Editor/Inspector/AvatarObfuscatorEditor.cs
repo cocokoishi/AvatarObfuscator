@@ -103,25 +103,11 @@ namespace HateRipper.AvatarObfuscator.Inspector
             EditorGUI.LabelField(new Rect(logoRect.x + 54, logoRect.y + 30, logoRect.width - 60, subHeight),
                 shortLabel, subStyle);
 
-            // Hover tooltip — invisible label captures mouse, shows red text below banner
+            // Tooltip registration — hovering the logo shows a small popup
             var tipText = "I hate rippers and hackers so i do this to confuse them. Just add a passcode prefab to prevent hotswap.";
-            GUI.Label(logoRect, new GUIContent("", tipText));
-            if (!string.IsNullOrEmpty(GUI.tooltip))
-            {
-                var tipStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, wordWrap = true };
-                tipStyle.normal.textColor = Color.red;
+            EditorGUI.LabelField(logoRect, new GUIContent("", tipText));
 
-                var tipContent = new GUIContent(tipText);
-                var tipWidth = logoRect.width - 12;
-                var tipHeight = tipStyle.CalcHeight(tipContent, tipWidth);
-
-                var tipBgRect = new Rect(logoRect.x + 6, logoRect.yMax + 3, tipWidth, tipHeight + 6);
-                EditorGUI.DrawRect(tipBgRect, new Color(0.08f, 0.08f, 0.08f, 0.95f));
-                EditorGUI.LabelField(new Rect(tipBgRect.x + 3, tipBgRect.y + 3, tipWidth - 6, tipHeight),
-                    tipText, tipStyle);
-            }
-
-            EditorGUILayout.Space(EditorGUIUtility.singleLineHeight);
+            EditorGUILayout.Space(2);
 
             RightAlignedToggle(_enabled, "Enable Obfuscation",
                 "Master switch. When off, the plugin behaves as if the component were absent.");
