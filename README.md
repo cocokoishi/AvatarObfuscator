@@ -8,7 +8,7 @@
 
 [![Unity](https://img.shields.io/badge/Unity-2022.3-black.svg?logo=unity)](https://unity.com/)
 [![NDMF](https://img.shields.io/badge/NDMF-%5E1.6.0-blue.svg)](https://github.com/bdunderscore/ndmf)
-[![VRChat SDK](https://img.shields.io/badge/VRCSDK-%E2%89%A53.7-orange.svg)](https://creators.vrchat.com/)
+[![VRChat SDK](https://img.shields.io/badge/VRCSDK-%E2%89%A51.0-orange.svg)](https://creators.vrchat.com/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
