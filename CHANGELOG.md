@@ -2,6 +2,8 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.4.1] - 2026-05-22
+
 ## [0.4.0] - 2026-05-15
 
 ### Changed
