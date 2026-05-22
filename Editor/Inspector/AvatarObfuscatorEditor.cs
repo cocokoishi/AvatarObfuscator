@@ -91,7 +91,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             var verStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, alignment = TextAnchor.UpperRight };
             verStyle.normal.textColor = new Color(0.4f, 0.6f, 0.8f, 0.6f);
             EditorGUI.LabelField(new Rect(logoRect.x + logoRect.width - 54, logoRect.y + 7, 48, 14),
-                "v0.4.0", verStyle);
+                "v0.4.1", verStyle);
 
             // Subtitle (short, always visible)
             var subStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 10, wordWrap = true };
