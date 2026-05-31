@@ -37,7 +37,11 @@ namespace HateRipper.AvatarObfuscator
             var sequence = InPhase(BuildPhase.Optimizing)
                 .AfterPlugin("net.rs64.tex-trans-tool")
                 .AfterPlugin("com.anatawa12.avatar-optimizer")
-                .AfterPlugin("nadena.dev.modular-avatar");
+                .AfterPlugin("nadena.dev.modular-avatar")
+                .AfterPlugin("com.vrcfury.vrcfury")
+                .AfterPlugin("com.github.meshia")
+                .AfterPlugin("jp.lilxyzw.ndmf-mesh-simplifier")
+                .AfterPlugin("com.d4rkpl4y3r.avatar-optimizer");
 
             sequence
                 // 1. Read the AvatarObfuscator component, decide whether to do anything.
