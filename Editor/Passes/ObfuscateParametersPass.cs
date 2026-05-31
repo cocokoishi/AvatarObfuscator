@@ -469,6 +469,8 @@ namespace HateRipper.AvatarObfuscator.Passes
                         p.name = state.MapParameter(p.name);
                         if (!string.IsNullOrEmpty(p.source))
                             p.source = state.MapParameter(p.source);
+                        if (p.destParam is string destParam && !string.IsNullOrEmpty(destParam))
+                            p.destParam = state.MapParameter(destParam);
                     }
                     break;
                 case VRC.SDKBase.VRC_AnimatorPlayAudio playAudio:
@@ -509,10 +511,11 @@ namespace HateRipper.AvatarObfuscator.Passes
                 // Note: control.name is the user-visible label and we DO NOT touch it.
 
                 if (control.parameter != null && !string.IsNullOrEmpty(control.parameter.name))
-                    control.parameter = new VRCExpressionsMenu.Control.Parameter
-                    {
-                        name = state.MapParameter(control.parameter.name),
-                    };
+                {
+                    var param = control.parameter;
+                    param.name = state.MapParameter(param.name);
+                    control.parameter = param;
+                }
 
                 if (control.subParameters != null)
                 {
@@ -520,10 +523,10 @@ namespace HateRipper.AvatarObfuscator.Passes
                     {
                         var sp = control.subParameters[j];
                         if (sp != null && !string.IsNullOrEmpty(sp.name))
-                            control.subParameters[j] = new VRCExpressionsMenu.Control.Parameter
-                            {
-                                name = state.MapParameter(sp.name),
-                            };
+                        {
+                            sp.name = state.MapParameter(sp.name);
+                            control.subParameters[j] = sp;
+                        }
                     }
                 }
 

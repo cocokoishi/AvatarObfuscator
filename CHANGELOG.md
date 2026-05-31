@@ -1,6 +1,8 @@
 # Changelog
 
 All notable changes to this package will be documented in this file.
+## [0.4.3] - 2026-05-31
+fix more bugs
 
 ## [0.4.2] - 2026-05-31
 一个用户报告了神秘bug，即使我们已经在代码里面申明了要在aao等插件之后运行，插件仍然会出乎意料的在aao之前运行，这是在这个用户更新某个插件后意外发现并且完全无法复现的，这实在是太神奇了，我尝试添加了更多已知插件硬编码顺序来避免这个情况。

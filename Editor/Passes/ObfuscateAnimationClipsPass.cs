@@ -53,22 +53,33 @@ namespace HateRipper.AvatarObfuscator.Passes
                 if (animator.runtimeAnimatorController is AnimatorController ac) controllers.Add(ac);
 
             // Rewrite each clip
-            foreach (var ac in controllers)
+            foreach (var rawAc in controllers)
             {
+                var ac = rawAc;
+                if (ac == null) continue;
+
                 // Safety: every mutation below (state.motion, layer.SetOverrideMotion,
                 // ac.layers, RewriteBehaviourPaths) writes back to the controller
                 // asset or its sub-assets. We MUST only do this on controllers we
                 // have cloned — otherwise the user's source .controller on disk is
                 // silently modified.
                 //
-                // In the default config (obfuscateParameters = true), every
-                // reachable controller has been turned into a temp clone by
-                // ObfuscateParametersPass already, so this guard is a no-op. The
-                // guard only kicks in when the user has explicitly disabled
-                // parameter obfuscation while still enabling other renames — in
-                // that case we prefer "partial obfuscation but project safe" over
-                // "complete obfuscation but project corrupted".
-                if (ac == null || !context.IsTemporaryAsset(ac)) continue;
+                // When obfuscateParameters is on, ParametersPass already cloned
+                // every reachable controller, so this branch is a no-op. When
+                // parameters are NOT being obfuscated but hierarchy/blendshape
+                // renames ARE, the controller won't be temporary yet — we clone
+                // it here so state.motion can be safely updated.
+                if (!context.IsTemporaryAsset(ac))
+                {
+                    // Object.Instantiate produces a fully standalone clone that
+                    // NDMF's ObjectRegistry resolves at build time, so we do not
+                    // need to manually update the descriptor/animator reference.
+                    var clone = Object.Instantiate(ac);
+                    clone.name = ac.name;
+                    context.AssetSaver.SaveAsset(clone);
+                    ObjectRegistry.RegisterReplacedObject(ac, clone);
+                    ac = clone;
+                }
 
                 foreach (var state2 in AnimatorWalker.AllStates(ac))
                     state2.motion = MapMotion(context, state, state2.motion, clipMap);
@@ -151,6 +162,11 @@ namespace HateRipper.AvatarObfuscator.Passes
 
             var floatBindings = AnimationUtility.GetCurveBindings(clip);
             var objectBindings = AnimationUtility.GetObjectReferenceCurveBindings(clip);
+#if UNITY_2023_1_OR_NEWER
+            var discreteBindings = AnimationUtility.GetDiscreteCurveBindings(clip);
+#else
+            var discreteBindings = Array.Empty<EditorCurveBinding>();
+#endif
 
             // Determine if any binding actually needs rewriting; if not, skip cloning.
             bool needsRewrite = false;
@@ -162,6 +178,12 @@ namespace HateRipper.AvatarObfuscator.Passes
                     if (NeedsBindingRewrite(state, b) || ObjectCurveNeedsRewrite(state, clip, b))
                     { needsRewrite = true; break; }
             }
+            if (!needsRewrite)
+            {
+                foreach (var b in discreteBindings)
+                    if (NeedsBindingRewrite(state, b))
+                    { needsRewrite = true; break; }
+            }
 
             if (!needsRewrite)
             {
@@ -169,37 +191,32 @@ namespace HateRipper.AvatarObfuscator.Passes
                 return clip;
             }
 
-            // Clone — never mutate user assets.
-            var newClip = new AnimationClip
-            {
-                name = clip.name,
-                wrapMode = clip.wrapMode,
-                legacy = clip.legacy,
-                frameRate = clip.frameRate,
-                localBounds = clip.localBounds,
-            };
+            // Clone via Object.Instantiate — preserves ALL internal data
+            // (muscle clips, animation events, root motion curves, etc.) that
+            // new AnimationClip{} + manual curve copy would silently lose.
+            var newClip = Object.Instantiate(clip);
+            newClip.name = clip.name;
             ctx.AssetSaver.SaveAsset(newClip);
             ObjectRegistry.RegisterReplacedObject(clip, newClip);
 
-            // Carry over m_UseHighQualityCurve (no public API)
-            using (var so = new SerializedObject(clip))
-            using (var nso = new SerializedObject(newClip))
-            {
-                var src = so.FindProperty("m_UseHighQualityCurve");
-                var dst = nso.FindProperty("m_UseHighQualityCurve");
-                if (src != null && dst != null) dst.boolValue = src.boolValue;
-                nso.ApplyModifiedPropertiesWithoutUndo();
-            }
-
+            // Rewrite float curves: remove old binding, add renamed binding.
+            // This is the same pattern PuddingKC uses — in-place remove/re-add
+            // on the clone, which leaves muscle clip / event / internal data intact.
             foreach (var binding in floatBindings)
             {
+                if (!NeedsBindingRewrite(state, binding)) continue;
                 var newBinding = MapBinding(state, binding);
+                AnimationUtility.SetEditorCurve(newClip, binding, null);
                 AnimationUtility.SetEditorCurve(newClip, newBinding,
                     AnimationUtility.GetEditorCurve(clip, binding));
             }
 
+            // Rewrite object reference curves: remap material/texture/mesh/audio
+            // references in lockstep with path/property renames.
             foreach (var binding in objectBindings)
             {
+                if (!NeedsBindingRewrite(state, binding) && !ObjectCurveNeedsRewrite(state, clip, binding))
+                    continue;
                 var newBinding = MapBinding(state, binding);
                 var keyframes = AnimationUtility.GetObjectReferenceCurve(clip, binding);
                 if (keyframes != null)
@@ -216,28 +233,36 @@ namespace HateRipper.AvatarObfuscator.Passes
                             keyframes[i].value = state.MapAudio(audio);
                     }
                 }
+                AnimationUtility.SetObjectReferenceCurve(newClip, binding, null);
                 AnimationUtility.SetObjectReferenceCurve(newClip, newBinding, keyframes);
             }
 
-            // Preserve length if the rewrite removed bindings (guards against empty clips changing length).
-            if (!Mathf.Approximately(newClip.length, clip.length))
+#if UNITY_2023_1_OR_NEWER
+            // Rewrite discrete (int) curves — same remove/re-add pattern.
+            foreach (var binding in discreteBindings)
             {
-                // Bind the length-padding curve to a homoglyph path generated
-                // from the same name pool as everything else. Older versions
-                // used a literal "$ObfuscatorClipLengthDummy$" string here
-                // which a ripper could grep for to fingerprint this plugin
-                // in extracted bundles. Now the placeholder is indistinguishable
-                // from any other obfuscated identifier.
-                var padPath = state.NameGen != null ? state.NameGen.Next() : "ÌÍÎÏ";
-                newClip.SetCurve(padPath, typeof(GameObject), "m_IsActive",
-                    AnimationCurve.Constant(clip.length, clip.length, 1f));
+                if (!NeedsBindingRewrite(state, binding)) continue;
+                var newBinding = MapBinding(state, binding);
+                AnimationUtility.SetDiscreteCurve(newClip, binding, null);
+                AnimationUtility.SetDiscreteCurve(newClip, newBinding,
+                    AnimationUtility.GetDiscreteCurve(clip, binding));
             }
+#endif
+
             clipMap[clip] = newClip;
 
-            var settings = AnimationUtility.GetAnimationClipSettings(clip);
+            // If the clip has an additive reference pose clip that also needs
+            // rewriting, clone and replace it recursively.
+            var settings = AnimationUtility.GetAnimationClipSettings(newClip);
             if (settings.additiveReferencePoseClip != null)
-                settings.additiveReferencePoseClip = RewriteClip(ctx, state, settings.additiveReferencePoseClip, clipMap);
-            AnimationUtility.SetAnimationClipSettings(newClip, settings);
+            {
+                var rewritten = RewriteClip(ctx, state, settings.additiveReferencePoseClip, clipMap);
+                if (!ReferenceEquals(rewritten, settings.additiveReferencePoseClip))
+                {
+                    settings.additiveReferencePoseClip = rewritten;
+                    AnimationUtility.SetAnimationClipSettings(newClip, settings);
+                }
+            }
 
             return newClip;
         }
