@@ -30,6 +30,59 @@ namespace HateRipper.AvatarObfuscator
 
         protected override void Configure()
         {
+            // Read config and destroy the component in Resolving, before any
+            // other plugin's Optimizing passes run. This prevents other plugins
+            // from ever seeing the AvatarObfuscator component, matching the
+            // defensive pattern used by puddingkc's NameObfuscatorPlugin.
+            InPhase(BuildPhase.Resolving)
+                .Run("Store AvatarObfuscator Config", ctx =>
+                {
+                    var state = ctx.GetState<ObfuscationContext>();
+                    var component = ctx.AvatarRootObject.GetComponent<AvatarObfuscator>();
+                    if (component == null || component.options == null || !component.options.enabled)
+                    {
+                        state.Enabled = false;
+                        return;
+                    }
+
+                    var src = component.options;
+                    state.Options = new ObfuscationOptions
+                    {
+                        enabled = src.enabled,
+                        obfuscateParameters = src.obfuscateParameters,
+                        obfuscateExpressionParameters = src.obfuscateExpressionParameters,
+                        skipParametersContaining = src.skipParametersContaining,
+                        flattenStatePositions = src.flattenStatePositions,
+                        obfuscateBlendShapes = src.obfuscateBlendShapes,
+                        preserveMmdBlendShapes = src.preserveMmdBlendShapes,
+                        obfuscateHierarchy = src.obfuscateHierarchy,
+                        preserveMmdBodyObject = src.preserveMmdBodyObject,
+                        obfuscateMeshAssetNames = src.obfuscateMeshAssetNames,
+                        obfuscateAnimationClipNames = src.obfuscateAnimationClipNames,
+                        obfuscateMaterialAssetNames = src.obfuscateMaterialAssetNames,
+                        obfuscateTextureAssetNames = src.obfuscateTextureAssetNames,
+                        obfuscateAudioClipAssetNames = src.obfuscateAudioClipAssetNames,
+                        remapUvTextures = src.remapUvTextures,
+                        autoMergeSkinnedMesh = src.autoMergeSkinnedMesh,
+                        rewriteAnimationClips = src.rewriteAnimationClips,
+                        useCustomAlphabet = src.useCustomAlphabet,
+                        customChar0 = src.customChar0,
+                        customChar1 = src.customChar1,
+                        customChar2 = src.customChar2,
+                        customChar3 = src.customChar3,
+                        seed = src.seed,
+                        generatedNameLength = src.generatedNameLength,
+                    };
+
+                    state.Enabled = true;
+                    state.NameGen = new NameGenerator(
+                        state.Options.seed,
+                        state.Options.generatedNameLength,
+                        state.Options.GetEffectiveAlphabet());
+
+                    UnityEngine.Object.DestroyImmediate(component);
+                });
+
             // Run in the Optimizing phase, *after* TexTransTool, Avatar Optimizer
             // and Modular Avatar — we want the final form of the avatar before
             // we obfuscate. Each AfterPlugin is a no-op when the named plugin
@@ -44,7 +97,7 @@ namespace HateRipper.AvatarObfuscator
                 .AfterPlugin("com.d4rkpl4y3r.avatar-optimizer");
 
             sequence
-                // 1. Read the AvatarObfuscator component, decide whether to do anything.
+                // 1. Gate on state.Enabled — config was already extracted in Resolving.
                 .Run(CollectStatePass.Instance)
 
                 // 2. Optional auto-merge of static skinned meshes. Runs first so the

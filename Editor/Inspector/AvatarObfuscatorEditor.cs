@@ -32,6 +32,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _customChar2;
         private SerializedProperty _customChar3;
 
+        private bool _showOptions = true;
         private bool _showAdvanced;
         private bool _showContactMe;
 
@@ -91,7 +92,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             var verStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, alignment = TextAnchor.UpperRight };
             verStyle.normal.textColor = new Color(0.4f, 0.6f, 0.8f, 0.6f);
             EditorGUI.LabelField(new Rect(logoRect.x + logoRect.width - 54, logoRect.y + 7, 48, 14),
-                "v0.4.3", verStyle);
+                "v0.4.4", verStyle);
 
             // Subtitle (short, always visible)
             var subStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 10, wordWrap = true };
@@ -112,9 +113,21 @@ namespace HateRipper.AvatarObfuscator.Inspector
             RightAlignedToggle(_enabled, "Enable Obfuscation",
                 "Master switch. When off, the plugin behaves as if the component were absent.");
 
+            // Force-close the options foldout when the master switch is off,
+            // so the inspector stays tidy when obfuscation is disabled.
+            if (!_enabled.boolValue)
+                _showOptions = false;
+
+            EditorGUILayout.Space();
+
+            // The foldout itself is greyed and non-interactive when master is off.
             using (new EditorGUI.DisabledScope(!_enabled.boolValue))
             {
-                EditorGUILayout.Space();
+                _showOptions = EditorGUILayout.Foldout(_showOptions, "Obfuscation Options", true);
+            }
+
+            if (_showOptions)
+            {
                 Section("Parameters & Animator");
                 RightAlignedToggle(_params, "Animator Parameters",
                     "Rename animator parameters in every playable layer + their references " +

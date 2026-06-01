@@ -1,6 +1,10 @@
 # Changelog
 
 All notable changes to this package will be documented in this file.
+
+## [0.4.4] - 2026-05-31
+我们尝试修复了之前的和aao的潜在冲突问题，感谢puddingkc的项目提供的参考。
+
 ## [0.4.3] - 2026-05-31
 fix more bugs
 
