@@ -32,7 +32,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _customChar2;
         private SerializedProperty _customChar3;
 
-        private bool _showOptions = true;
+        private bool _showOptions = false;
         private bool _showAdvanced;
         private bool _showContactMe;
 
