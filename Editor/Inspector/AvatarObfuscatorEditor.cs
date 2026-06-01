@@ -123,7 +123,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             // The foldout itself is greyed and non-interactive when master is off.
             using (new EditorGUI.DisabledScope(!_enabled.boolValue))
             {
-                _showOptions = EditorGUILayout.Foldout(_showOptions, "Obfuscation Options", true);
+                _showOptions = EditorGUILayout.Foldout(_showOptions, "Obfuscation Settings", true);
             }
 
             if (_showOptions)
@@ -252,11 +252,17 @@ namespace HateRipper.AvatarObfuscator.Inspector
                     "referenced by name).");
 
                 EditorGUILayout.Space();
-                _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced", true);
-                if (_showAdvanced)
-                {
-                    EditorGUI.indentLevel++;
-                    RightAlignedToggle(_useCustomAlphabet, "Custom Obfuscation Symbols",
+                EditorGUILayout.HelpBox(
+                    "Please keep the default options, otherwise the obfuscated avatar may not work.",
+                    MessageType.Warning);
+            }
+
+            EditorGUILayout.Space();
+            _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced", true);
+            if (_showAdvanced)
+            {
+                EditorGUI.indentLevel++;
+                RightAlignedToggle(_useCustomAlphabet, "Custom Obfuscation Symbols",
                         "Use a custom set of 4 obfuscation symbols instead of the built-in ÌÍÎÏ alphabet. " +
                         "The default custom symbols (II, ll, Il, lI) look nearly identical in most fonts.");
                     using (new EditorGUI.DisabledScope(!_useCustomAlphabet.boolValue))
@@ -295,33 +301,29 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         "Length of generated obfuscated names. Each character is one of the 4 symbols " +
                         "(2 bits of entropy), so 24 chars = 48 bits = ~280 trillion unique names."));
 
-                    EditorGUILayout.Space();
-                    _showContactMe = EditorGUILayout.Foldout(_showContactMe, "Contact me", true);
-                    if (_showContactMe)
-                    {
-                        EditorGUI.indentLevel++;
-                        if (GUILayout.Button("Project: " + AvatarObfuscator.ProjectUrl, EditorStyles.linkLabel))
-                            Application.OpenURL(AvatarObfuscator.ProjectUrl);
-                        if (GUILayout.Button("Author: " + AvatarObfuscator.AuthorUrl, EditorStyles.linkLabel))
-                            Application.OpenURL(AvatarObfuscator.AuthorUrl);
-                        EditorGUI.indentLevel--;
-                    }
+                EditorGUILayout.Space();
+                _showContactMe = EditorGUILayout.Foldout(_showContactMe, "Contact me", true);
+                if (_showContactMe)
+                {
+                    EditorGUI.indentLevel++;
+                    if (GUILayout.Button("Project: " + AvatarObfuscator.ProjectUrl, EditorStyles.linkLabel))
+                        Application.OpenURL(AvatarObfuscator.ProjectUrl);
+                    if (GUILayout.Button("Author: " + AvatarObfuscator.AuthorUrl, EditorStyles.linkLabel))
+                        Application.OpenURL(AvatarObfuscator.AuthorUrl);
+                    if (GUILayout.Button("Special Thanks to PuddingKC(布丁丿Pudding)", EditorStyles.linkLabel))
+                        Application.OpenURL("https://github.com/Null-K/");
+                    if (GUILayout.Button("Thanks to 深度求索", EditorStyles.linkLabel))
+                        Application.OpenURL("https://github.com/deepseek-ai");
                     EditorGUI.indentLevel--;
                 }
+                EditorGUI.indentLevel--;
             }
 
             // ----------------------------------------------------------------
-            // Footer links live exclusively under Advanced → Contact me now;
-            // the always-visible duplicate at the bottom has been removed to
-            // keep the inspector tidy for users who don't need it.
+            // Footer links live exclusively under Advanced -> Contact me now.
             // ----------------------------------------------------------------
 
             serializedObject.ApplyModifiedProperties();
-
-            EditorGUILayout.Space();
-            EditorGUILayout.HelpBox(
-                "Please keep the default options, otherwise the obfuscated avatar may not work.",
-                MessageType.Warning);
         }
 
         // ------------------------------------------------------------------
