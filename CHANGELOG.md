@@ -2,6 +2,9 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.4.5] - 2026-05-31
+luv
+
 ## [0.4.4] - 2026-05-31
 我们尝试修复了之前的和aao的潜在冲突问题，感谢puddingkc的项目（https://github.com/Null-K/avatar-name-obfuscator）再次为我们提供的参考。同时优化了UI界面，让她看起来更能被人类看懂，收纳了实际上一个都不能动的选项们。
 

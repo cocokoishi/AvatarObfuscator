@@ -92,7 +92,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             var verStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, alignment = TextAnchor.UpperRight };
             verStyle.normal.textColor = new Color(0.4f, 0.6f, 0.8f, 0.6f);
             EditorGUI.LabelField(new Rect(logoRect.x + logoRect.width - 54, logoRect.y + 7, 48, 14),
-                "v0.4.4", verStyle);
+                "v0.4.5", verStyle);
 
             // Subtitle (short, always visible)
             var subStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 10, wordWrap = true };
@@ -312,7 +312,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
                         Application.OpenURL(AvatarObfuscator.AuthorUrl);
                     if (GUILayout.Button("Special Thanks to PuddingKC(布丁丿Pudding)", EditorStyles.linkLabel))
                         Application.OpenURL("https://github.com/Null-K/");
-                    if (GUILayout.Button("Thanks to 深度求索", EditorStyles.linkLabel))
+                    if (GUILayout.Button("Made with love", EditorStyles.linkLabel))
                         Application.OpenURL("https://github.com/deepseek-ai");
                     EditorGUI.indentLevel--;
                 }
