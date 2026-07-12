@@ -1,5 +1,8 @@
 using UnityEditor;
 using UnityEngine;
+#if FR_OBF_VRCSDK3_AVATARS
+using VRC.Core;
+#endif
 
 namespace HateRipper.AvatarObfuscator.Inspector
 {
@@ -31,9 +34,10 @@ namespace HateRipper.AvatarObfuscator.Inspector
         private SerializedProperty _customChar1;
         private SerializedProperty _customChar2;
         private SerializedProperty _customChar3;
+        private SerializedProperty _obfNamePrefix;
 
         private bool _showOptions = false;
-        private bool _showAdvanced;
+        private bool _showAdvanced = true;
         private bool _showContactMe;
 
         private void OnEnable()
@@ -63,6 +67,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             _customChar1     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar1));
             _customChar2     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar2));
             _customChar3     = _options.FindPropertyRelative(nameof(ObfuscationOptions.customChar3));
+            _obfNamePrefix   = _options.FindPropertyRelative(nameof(ObfuscationOptions.obfuscationNamePrefix));
         }
 
         public override void OnInspectorGUI()
@@ -92,7 +97,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             var verStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 9, alignment = TextAnchor.UpperRight };
             verStyle.normal.textColor = new Color(0.4f, 0.6f, 0.8f, 0.6f);
             EditorGUI.LabelField(new Rect(logoRect.x + logoRect.width - 54, logoRect.y + 7, 48, 14),
-                "v0.4.5", verStyle);
+                "v0.4.6", verStyle);
 
             // Subtitle (short, always visible)
             var subStyle = new GUIStyle(EditorStyles.miniLabel) { fontSize = 10, wordWrap = true };
@@ -107,6 +112,14 @@ namespace HateRipper.AvatarObfuscator.Inspector
             // Tooltip registration — hovering the logo shows a small popup
             var tipText = "I hate rippers and hackers so i do this to confuse them. Just add a passcode prefab to prevent hotswap.";
             EditorGUI.LabelField(logoRect, new GUIContent("", tipText));
+
+            // Click to open project page
+            if (Event.current.type == EventType.MouseDown && logoRect.Contains(Event.current.mousePosition))
+            {
+                Application.OpenURL(AvatarObfuscator.ProjectUrl);
+                Event.current.Use();
+            }
+            EditorGUIUtility.AddCursorRect(logoRect, MouseCursor.Link);
 
             EditorGUILayout.Space(2);
 
@@ -123,7 +136,7 @@ namespace HateRipper.AvatarObfuscator.Inspector
             // The foldout itself is greyed and non-interactive when master is off.
             using (new EditorGUI.DisabledScope(!_enabled.boolValue))
             {
-                _showOptions = EditorGUILayout.Foldout(_showOptions, "Obfuscation Settings", true);
+                _showOptions = EditorGUILayout.Foldout(_showOptions, "Debug Settings", true);
             }
 
             if (_showOptions)
@@ -258,10 +271,59 @@ namespace HateRipper.AvatarObfuscator.Inspector
             }
 
             EditorGUILayout.Space();
-            _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced", true);
+            _showAdvanced = EditorGUILayout.Foldout(_showAdvanced, "Advanced Settings", true);
             if (_showAdvanced)
             {
                 EditorGUI.indentLevel++;
+
+                // --- Obfuscation Name Prefix (first row in Advanced) ---
+                EditorGUILayout.LabelField("Obfuscation Name Prefix");
+
+                var prefixRect = EditorGUI.IndentedRect(
+                    EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight));
+#if FR_OBF_VRCSDK3_AVATARS
+                const float btnWidth = 110f;
+                const float btnGap = 4f;
+                var fieldRect = new Rect(prefixRect.x, prefixRect.y,
+                    prefixRect.width - btnWidth - btnGap, prefixRect.height);
+                var btnRect = new Rect(fieldRect.xMax + btnGap, prefixRect.y,
+                    btnWidth, prefixRect.height);
+#else
+                var fieldRect = prefixRect;
+#endif
+
+                int savedIndent = EditorGUI.indentLevel;
+                EditorGUI.indentLevel = 0;
+                EditorGUI.BeginProperty(fieldRect, GUIContent.none, _obfNamePrefix);
+                EditorGUI.BeginChangeCheck();
+                string newPrefix = EditorGUI.TextField(fieldRect, _obfNamePrefix.stringValue);
+                if (EditorGUI.EndChangeCheck())
+                    _obfNamePrefix.stringValue = newPrefix;
+                EditorGUI.EndProperty();
+
+#if FR_OBF_VRCSDK3_AVATARS
+                if (GUI.Button(btnRect, "Get Blueprint ID"))
+                {
+                    var comp = ((AvatarObfuscator)target).GetComponent<PipelineManager>();
+                    if (comp != null && !string.IsNullOrEmpty(comp.blueprintId))
+                    {
+                        _obfNamePrefix.stringValue += comp.blueprintId;
+                        serializedObject.ApplyModifiedProperties();
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("Avatar Obfuscator",
+                            "No PipelineManager found on this avatar, or its Blueprint ID is empty.\n\n" +
+                            "Please upload the avatar first to get the Blueprint ID from VRCat server.",
+                            "OK");
+                    }
+                }
+#endif
+                EditorGUI.indentLevel = savedIndent;
+
+                EditorGUILayout.Space(4);
+
+                // --- Custom Obfuscation Symbols ---
                 RightAlignedToggle(_useCustomAlphabet, "Custom Obfuscation Symbols",
                         "Use a custom set of 4 obfuscation symbols instead of the built-in ÌÍÎÏ alphabet. " +
                         "The default custom symbols (II, ll, Il, lI) look nearly identical in most fonts.");

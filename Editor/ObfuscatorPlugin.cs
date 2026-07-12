@@ -72,6 +72,7 @@ namespace HateRipper.AvatarObfuscator
                         customChar3 = src.customChar3,
                         seed = src.seed,
                         generatedNameLength = src.generatedNameLength,
+                        obfuscationNamePrefix = src.obfuscationNamePrefix,
                     };
 
                     state.Enabled = true;
@@ -79,6 +80,7 @@ namespace HateRipper.AvatarObfuscator
                         state.Options.seed,
                         state.Options.generatedNameLength,
                         state.Options.GetEffectiveAlphabet());
+                    state.NameGen.Prefix = state.Options.obfuscationNamePrefix ?? "";
 
                     UnityEngine.Object.DestroyImmediate(component);
                 });

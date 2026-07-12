@@ -30,7 +30,7 @@ that VRChat itself uses internally.
 **Download the latest `.unitypackage` from
 [Releases](https://github.com/cocokoishi/AvatarObfuscator/releases).**
 
-The current version is **v0.4.5**. Only this version is recommended.
+The current version is **v0.4.6**. Only this version is recommended.
 Older versions contain mysterious bugs.
 
 1. Drag the `.unitypackage` into your Unity project. It lands in

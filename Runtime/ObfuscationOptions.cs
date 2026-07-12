@@ -126,6 +126,14 @@ namespace HateRipper.AvatarObfuscator
         public bool rewriteAnimationClips = true;
 
         [Header("Advanced")]
+        [Tooltip("Optional prefix prepended to every generated obfuscated name. " +
+                 "Useful for identifying which avatar produced a name in logs or " +
+                 "for namespacing obfuscated parameters when multiple avatars share " +
+                 "an animator controller.\n\n" +
+                 "Leave blank for no prefix (the default). You can use the Inspector " +
+                 "button to auto-fill from the avatar's VRC Pipeline Manager blueprint ID.")]
+        public string obfuscationNamePrefix = "";
+
         [Tooltip("Use a custom set of 4 obfuscation symbols instead of the built-in ÌÍÎÏ alphabet. " +
                  "The default custom symbols (II, ll, Il, lI) look nearly identical in most fonts, " +
                  "making obfuscated names visually indistinguishable from each other.\n\n" +
