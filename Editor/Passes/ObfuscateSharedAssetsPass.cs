@@ -78,9 +78,20 @@ namespace HateRipper.AvatarObfuscator.Passes
             //    reference icon textures that may not appear on any renderer
             //    material. Cloning them here makes them temporary so
             //    FinalizeAssetsPass can rename their .name fields.
+            //
+            //    Gated on obfuscateParameters as well: the menu tree is only
+            //    cloned into temporary assets by ObfuscateParametersPass.RewriteMenu
+            //    when obfuscateParameters is on. If it is off, descriptor.expressionsMenu
+            //    still points at the user's SOURCE menu asset, and CloneMenuIconTextures
+            //    (which rewrites control.icon) must NOT run against it. The inspector
+            //    only greys the obfuscateExpressionParameters child toggle when
+            //    obfuscateParameters is off — it does not reset the stored value, so
+            //    the (params=off, expParams=on) combination is reachable.
             // ----------------------------------------------------------------
-            if (wantTextures && state.Options.obfuscateExpressionParameters)
+#if FR_OBF_VRCSDK3_AVATARS
+            if (wantTextures && state.Options.obfuscateParameters && state.Options.obfuscateExpressionParameters)
                 CloneMenuIconTextures(context, state);
+#endif
         }
 
         // ====================================================================
@@ -403,6 +414,13 @@ namespace HateRipper.AvatarObfuscator.Passes
             VRCExpressionsMenu menu, HashSet<VRCExpressionsMenu> visited)
         {
             if (menu == null || !visited.Add(menu)) return;
+
+            // Defensive backstop: the loop below rewrites control.icon, which mutates
+            // the `menu` ScriptableObject. Only ever mutate a temporary clone — never
+            // the user's source menu asset. The reachable tree is cloned by
+            // ObfuscateParametersPass.RewriteMenu, but guard here too so a partial
+            // clone (or a future caller) can never leak a write into a source asset.
+            if (!context.IsTemporaryAsset(menu)) return;
 
             var controls = menu.controls;
             for (int i = 0; i < controls.Count; i++)
