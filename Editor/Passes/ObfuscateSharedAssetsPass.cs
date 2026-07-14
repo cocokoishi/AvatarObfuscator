@@ -7,6 +7,7 @@ using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 #if FR_OBF_VRCSDK3_AVATARS
 using VRC.SDK3.Avatars.Components;
+using VRC.SDK3.Avatars.ScriptableObjects;
 #endif
 
 namespace HateRipper.AvatarObfuscator.Passes
@@ -71,6 +72,15 @@ namespace HateRipper.AvatarObfuscator.Passes
             // ----------------------------------------------------------------
             if (wantAudio)
                 CloneAudioClips(context, state);
+
+            // ----------------------------------------------------------------
+            // 4. Menu icon texture cloning. Expression menu controls can
+            //    reference icon textures that may not appear on any renderer
+            //    material. Cloning them here makes them temporary so
+            //    FinalizeAssetsPass can rename their .name fields.
+            // ----------------------------------------------------------------
+            if (wantTextures && state.Options.obfuscateExpressionParameters)
+                CloneMenuIconTextures(context, state);
         }
 
         // ====================================================================
@@ -371,5 +381,63 @@ namespace HateRipper.AvatarObfuscator.Passes
                 if (animator.runtimeAnimatorController is AnimatorController ac) set.Add(ac);
             return set;
         }
+
+        // ====================================================================
+        // Menu icon textures
+        // ====================================================================
+#if FR_OBF_VRCSDK3_AVATARS
+        private static void CloneMenuIconTextures(BuildContext context, ObfuscationContext state)
+        {
+            var descriptor = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
+            if (descriptor == null) return;
+
+            var menu = descriptor.expressionsMenu;
+            if (menu == null) return;
+
+            var visited = new HashSet<VRCExpressionsMenu>();
+            CloneMenuIconTexturesRecursive(context, state, menu, visited);
+        }
+
+        private static void CloneMenuIconTexturesRecursive(
+            BuildContext context, ObfuscationContext state,
+            VRCExpressionsMenu menu, HashSet<VRCExpressionsMenu> visited)
+        {
+            if (menu == null || !visited.Add(menu)) return;
+
+            var controls = menu.controls;
+            for (int i = 0; i < controls.Count; i++)
+            {
+                var control = controls[i];
+                var icon = control.icon;
+                if (icon != null && icon is Texture2D t2d)
+                {
+                    // Already cloned by CloneTextures (same texture used on a material)
+                    if (state.TextureReplacements.TryGetValue(t2d, out var existing))
+                    {
+                        if (!ReferenceEquals(control.icon, existing))
+                        {
+                            control.icon = existing;
+                            controls[i] = control;
+                        }
+                    }
+                    // Already a temporary asset — skip
+                    else if (!context.IsTemporaryAsset(t2d))
+                    {
+                        var copy = CloneTexture2D(context, t2d);
+                        if (copy != null)
+                        {
+                            state.TextureReplacements[t2d] = copy;
+                            ObjectRegistry.RegisterReplacedObject(t2d, copy);
+                            control.icon = copy;
+                            controls[i] = control;
+                        }
+                    }
+                }
+
+                if (control.subMenu != null)
+                    CloneMenuIconTexturesRecursive(context, state, control.subMenu, visited);
+            }
+        }
+#endif
     }
 }

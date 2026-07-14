@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 #if FR_OBF_VRCSDK3_AVATARS
 using VRC.SDK3.Avatars.Components;
+using VRC.SDK3.Avatars.ScriptableObjects;
 #endif
 
 namespace HateRipper.AvatarObfuscator.Passes
@@ -162,6 +163,21 @@ namespace HateRipper.AvatarObfuscator.Passes
                         }
                     }
                 }
+
+                // Menu icon textures — discovered via expression menu controls
+                // rather than renderer materials. Uses the same seenTex to
+                // avoid double-renaming textures shared between materials and icons.
+#if FR_OBF_VRCSDK3_AVATARS
+                if (state.Options.obfuscateExpressionParameters)
+                {
+                    var descriptor3 = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
+                    if (descriptor3 != null && descriptor3.expressionsMenu != null)
+                    {
+                        var iconVisited = new HashSet<VRCExpressionsMenu>();
+                        RenameMenuIconTextures(context, descriptor3.expressionsMenu, state, seenTex, iconVisited);
+                    }
+                }
+#endif
             }
 
             if (state.Options.obfuscateAudioClipAssetNames)
@@ -202,6 +218,30 @@ namespace HateRipper.AvatarObfuscator.Passes
                 }
 #endif
             }
+
+            // Expression Parameters and Expression Menu asset names.
+            // ObfuscateParametersPass has already cloned them and reassigned
+            // descriptor.expressionParameters / descriptor.expressionsMenu;
+            // we rename the clones' .name fields here.
+#if FR_OBF_VRCSDK3_AVATARS
+            if (state.Options.obfuscateExpressionParameters)
+            {
+                var desc = context.AvatarRootObject.GetComponent<VRCAvatarDescriptor>();
+                if (desc != null)
+                {
+                    if (desc.expressionParameters != null
+                        && context.IsTemporaryAsset(desc.expressionParameters))
+                    {
+                        desc.expressionParameters.name = state.NameGen.Next();
+                    }
+                    if (desc.expressionsMenu != null)
+                    {
+                        var menuVisited = new HashSet<VRCExpressionsMenu>();
+                        RenameMenuTree(context, state, desc.expressionsMenu, menuVisited);
+                    }
+                }
+            }
+#endif
         }
 
         private static bool IsMmdBody(Mesh mesh)
@@ -251,6 +291,37 @@ namespace HateRipper.AvatarObfuscator.Passes
             if (!string.IsNullOrEmpty(path) && path.Contains("VRCSDK"))
                 return true;
             return false;
+        }
+
+        private static void RenameMenuTree(BuildContext context, ObfuscationContext state,
+            VRCExpressionsMenu menu, HashSet<VRCExpressionsMenu> visited)
+        {
+            if (menu == null || !visited.Add(menu)) return;
+            if (context.IsTemporaryAsset(menu))
+                menu.name = state.NameGen.Next();
+
+            foreach (var control in menu.controls)
+            {
+                if (control.subMenu != null)
+                    RenameMenuTree(context, state, control.subMenu, visited);
+            }
+        }
+
+        private static void RenameMenuIconTextures(BuildContext context, VRCExpressionsMenu menu,
+            ObfuscationContext state, HashSet<Texture2D> seenTex, HashSet<VRCExpressionsMenu> visited)
+        {
+            if (menu == null || !visited.Add(menu)) return;
+
+            foreach (var control in menu.controls)
+            {
+                if (control.icon != null && control.icon is Texture2D t2d
+                    && seenTex.Add(t2d) && context.IsTemporaryAsset(t2d))
+                {
+                    t2d.name = state.NameGen.Next();
+                }
+                if (control.subMenu != null)
+                    RenameMenuIconTextures(context, control.subMenu, state, seenTex, visited);
+            }
         }
 #endif
     }
