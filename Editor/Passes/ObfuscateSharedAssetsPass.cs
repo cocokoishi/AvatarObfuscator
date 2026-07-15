@@ -3,6 +3,7 @@ using HateRipper.AvatarObfuscator.Internal;
 using nadena.dev.ndmf;
 using UnityEditor.Animations;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
 #if FR_OBF_VRCSDK3_AVATARS
@@ -48,6 +49,12 @@ namespace HateRipper.AvatarObfuscator.Passes
             bool wantAudio     = state.Options.obfuscateAudioClipAssetNames;
 
             if (!wantMaterials && !wantTextures && !wantAudio) return;
+
+            // Texture assets are stored in separate NDMF containers. Without an
+            // asset-editing scope every SaveAsset call imports its container
+            // immediately, producing one full AssetDatabase refresh per texture.
+            // Defer all imports until this pass completes.
+            using var serializationScope = context.OpenSerializationScope();
 
             // ----------------------------------------------------------------
             // 1. Material cloning. Required whenever material OR texture
@@ -126,10 +133,7 @@ namespace HateRipper.AvatarObfuscator.Passes
                     // Already a temporary asset (cloned by some earlier pass that did not
                     // register it in MaterialReplacements). FinalizeAssetsPass will find
                     // it via GetComponentsInChildren<Renderer>(...).sharedMaterials and
-                    // rename it from there, so we don't need to track it here. Adding an
-                    // identity mapping would make ObjectCurveNeedsRewrite spuriously
-                    // return true for animation clips that reference this material,
-                    // causing unnecessary clip clones.
+                    // rename it from there, so we don't need to track it here.
                     if (context.IsTemporaryAsset(m)) continue;
 
                     var copy = CloneMaterial(context, m);
@@ -201,13 +205,18 @@ namespace HateRipper.AvatarObfuscator.Passes
 
                     // Already a temporary asset — FinalizeAssetsPass discovers it
                     // by walking renderers → materials → texture properties, so we
-                    // do not need to track it here. Avoiding the identity mapping
-                    // keeps ObjectCurveNeedsRewrite from spuriously triggering on
-                    // animation clips whose texture refs already point at temps.
+                    // do not need to track it here.
                     if (context.IsTemporaryAsset(t2d)) continue;
 
                     var copy = CloneTexture2D(context, t2d);
-                    if (copy == null) continue;
+                    if (copy == null)
+                    {
+                        // Cache the deterministic failure. MapTexture returns the
+                        // same source object, so animations and materials remain
+                        // functional without retrying the clone for every reference.
+                        state.TextureReplacements[t2d] = t2d;
+                        continue;
+                    }
                     state.TextureReplacements[t2d] = copy;
                     ObjectRegistry.RegisterReplacedObject(t2d, copy);
                     mat.SetTexture(propName, copy);
@@ -218,24 +227,77 @@ namespace HateRipper.AvatarObfuscator.Passes
         private static Texture2D CloneTexture2D(BuildContext context, Texture2D src)
         {
             if (src == null) return null;
-            // Object.Instantiate on a Texture2D produces a deep copy of the pixel
-            // data preserving format / mip chain / sRGB / wrap+filter modes. This
-            // is what we want: same bytes in the bundle, just a different asset
-            // name. The clone shares no GPU resource with the original after the
-            // copy completes.
-            Texture2D copy;
-            try { copy = Object.Instantiate(src); }
+            Texture2D copy = null;
+            try
+            {
+                // Instantiate is the most faithful path for readable textures. It
+                // preserves every serialized field, including the original encoded
+                // payload and mip chain.
+                if (src.isReadable)
+                {
+                    copy = Object.Instantiate(src);
+                }
+                else
+                {
+                    // Unity logs an error and can produce an empty object when
+                    // Instantiate is used on a non-readable texture. Use the same
+                    // GPU-copy pattern as Avatar Optimizer instead. Unsupported
+                    // formats are deliberately skipped so the renderer continues to
+                    // reference the valid source texture.
+                    copy = CloneNonReadableTexture(src);
+                }
+
+                if (copy == null) return null;
+                copy.name = src.name; // FinalizeAssetsPass renames
+                context.AssetSaver.SaveAsset(copy);
+                return copy;
+            }
             catch (System.Exception e)
             {
+                if (copy != null) Object.DestroyImmediate(copy);
                 Debug.LogWarning(
                     $"[AvatarObfuscator] Failed to clone Texture2D '{src.name}' ({src.format}, {src.width}x{src.height}): " +
                     $"{e.GetType().Name}: {e.Message}. Texture will keep its original name.");
                 return null;
             }
-            if (copy == null) return null;
-            copy.name = src.name; // FinalizeAssetsPass renames
-            context.AssetSaver.SaveAsset(copy);
-            return copy;
+        }
+
+        private static Texture2D CloneNonReadableTexture(Texture2D src)
+        {
+            if (SystemInfo.copyTextureSupport == CopyTextureSupport.None)
+                throw new System.NotSupportedException("Graphics.CopyTexture is unavailable on this platform");
+
+            // Crunch data cannot be used as the storage format of a newly-created
+            // Texture2D. Falling back to an uncompressed/readback copy would change
+            // memory and bundle characteristics, so keep the known-good source.
+            if (GraphicsFormatUtility.IsCrunchFormat(src.format))
+                throw new System.NotSupportedException($"Crunch texture format {src.format} cannot be cloned losslessly");
+
+            var copy = new Texture2D(
+                src.width, src.height, src.format, src.mipmapCount, linear: !src.isDataSRGB);
+            try
+            {
+                Graphics.CopyTexture(src, copy);
+
+                // Graphics.CopyTexture updates the readable destination's texture
+                // storage as well as its GPU resource on supported platforms. Apply
+                // finalises the copied mip data and restores the source's unreadable
+                // runtime behaviour before the asset is serialized.
+                copy.Apply(updateMipmaps: false, makeNoLongerReadable: true);
+
+                copy.wrapModeU = src.wrapModeU;
+                copy.wrapModeV = src.wrapModeV;
+                copy.wrapModeW = src.wrapModeW;
+                copy.filterMode = src.filterMode;
+                copy.anisoLevel = src.anisoLevel;
+                copy.mipMapBias = src.mipMapBias;
+                return copy;
+            }
+            catch
+            {
+                Object.DestroyImmediate(copy);
+                throw;
+            }
         }
 
         // ====================================================================
@@ -303,9 +365,9 @@ namespace HateRipper.AvatarObfuscator.Passes
                 // GetData failed (streaming clip, decoder error, ...): leave the
                 // reference pointing at the source so the avatar still plays the
                 // right audio. FinalizeAssetsPass will skip it (non-temp). We do
-                // NOT record this in AudioReplacements so callers re-attempt on
-                // the next reference — but CloneAudioClip's failure modes are
-                // deterministic per clip, so the cost is bounded.
+                // Cache the deterministic failure as an identity mapping. The
+                // source reference remains valid and later references do not retry.
+                state.AudioReplacements[src] = src;
                 return src;
             }
             context.AssetSaver.SaveAsset(copy);
@@ -448,6 +510,10 @@ namespace HateRipper.AvatarObfuscator.Passes
                             ObjectRegistry.RegisterReplacedObject(t2d, copy);
                             control.icon = copy;
                             controls[i] = control;
+                        }
+                        else
+                        {
+                            state.TextureReplacements[t2d] = t2d;
                         }
                     }
                 }

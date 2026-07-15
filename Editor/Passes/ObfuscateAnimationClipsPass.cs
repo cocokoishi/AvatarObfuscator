@@ -35,6 +35,11 @@ namespace HateRipper.AvatarObfuscator.Passes
             if (!state.Enabled || !state.Options.rewriteAnimationClips) return;
             // Even if no rename happened, we still loop through but turn into no-ops; cheap.
 
+            // Defer AssetDatabase imports until the entire pass has finished. In
+            // particular, rewritten clips remain cheap in-memory objects while their
+            // curves are updated and all generated assets are imported in one batch.
+            using var serializationScope = context.OpenSerializationScope();
+
             // Collect every animator we touched in earlier passes, plus any avatar masks.
             var controllers = new HashSet<AnimatorController>();
             var clipMap = new Dictionary<AnimationClip, AnimationClip>();
@@ -168,24 +173,46 @@ namespace HateRipper.AvatarObfuscator.Passes
             var discreteBindings = Array.Empty<EditorCurveBinding>();
 #endif
 
-            // Determine if any binding actually needs rewriting; if not, skip cloning.
-            bool needsRewrite = false;
-            foreach (var b in floatBindings)
-                if (NeedsBindingRewrite(state, b)) { needsRewrite = true; break; }
-            if (!needsRewrite)
+            // Build the complete rewrite plan before cloning. Besides avoiding
+            // duplicate GetObjectReferenceCurve calls, this lets us use Unity's
+            // batch curve APIs below: each batch synchronises the clip once instead
+            // of once per binding (which is extremely expensive on large clips).
+            var oldFloatBindings = new List<EditorCurveBinding>();
+            var newFloatBindings = new List<EditorCurveBinding>();
+            var floatCurves = new List<AnimationCurve>();
+            foreach (var binding in floatBindings)
             {
-                foreach (var b in objectBindings)
-                    if (NeedsBindingRewrite(state, b) || ObjectCurveNeedsRewrite(state, clip, b))
-                    { needsRewrite = true; break; }
-            }
-            if (!needsRewrite)
-            {
-                foreach (var b in discreteBindings)
-                    if (NeedsBindingRewrite(state, b))
-                    { needsRewrite = true; break; }
+                if (!NeedsBindingRewrite(state, binding)) continue;
+                oldFloatBindings.Add(binding);
+                newFloatBindings.Add(MapBinding(state, binding));
+                floatCurves.Add(AnimationUtility.GetEditorCurve(clip, binding));
             }
 
-            if (!needsRewrite)
+            var oldObjectBindings = new List<EditorCurveBinding>();
+            var newObjectBindings = new List<EditorCurveBinding>();
+            var objectCurves = new List<ObjectReferenceKeyframe[]>();
+            foreach (var binding in objectBindings)
+            {
+                var keyframes = AnimationUtility.GetObjectReferenceCurve(clip, binding);
+                bool bindingChanged = NeedsBindingRewrite(state, binding);
+                bool valuesChanged = RemapObjectCurveValues(state, keyframes);
+                if (!bindingChanged && !valuesChanged) continue;
+
+                oldObjectBindings.Add(binding);
+                newObjectBindings.Add(MapBinding(state, binding));
+                objectCurves.Add(keyframes);
+            }
+
+            var discreteRewrites = new List<(EditorCurveBinding Old, EditorCurveBinding New)>();
+            foreach (var binding in discreteBindings)
+            {
+                if (NeedsBindingRewrite(state, binding))
+                    discreteRewrites.Add((binding, MapBinding(state, binding)));
+            }
+
+            if (oldFloatBindings.Count == 0
+                && oldObjectBindings.Count == 0
+                && discreteRewrites.Count == 0)
             {
                 clipMap[clip] = clip;
                 return clip;
@@ -196,60 +223,39 @@ namespace HateRipper.AvatarObfuscator.Passes
             // new AnimationClip{} + manual curve copy would silently lose.
             var newClip = Object.Instantiate(clip);
             newClip.name = clip.name;
-            ctx.AssetSaver.SaveAsset(newClip);
-            ObjectRegistry.RegisterReplacedObject(clip, newClip);
 
-            // Rewrite float curves: remove old binding, add renamed binding.
-            // This is the same pattern PuddingKC uses — in-place remove/re-add
-            // on the clone, which leaves muscle clip / event / internal data intact.
-            foreach (var binding in floatBindings)
+            // Delete all old bindings first, then add all mapped bindings. The
+            // two-phase order is important when a target binding is also another
+            // rewrite's source binding. Each Set*Curves call performs one clip sync.
+            if (oldFloatBindings.Count > 0)
             {
-                if (!NeedsBindingRewrite(state, binding)) continue;
-                var newBinding = MapBinding(state, binding);
-                AnimationUtility.SetEditorCurve(newClip, binding, null);
-                AnimationUtility.SetEditorCurve(newClip, newBinding,
-                    AnimationUtility.GetEditorCurve(clip, binding));
+                AnimationUtility.SetEditorCurves(newClip,
+                    oldFloatBindings.ToArray(), new AnimationCurve[oldFloatBindings.Count]);
+                AnimationUtility.SetEditorCurves(newClip,
+                    newFloatBindings.ToArray(), floatCurves.ToArray());
             }
 
-            // Rewrite object reference curves: remap material/texture/mesh/audio
-            // references in lockstep with path/property renames.
-            foreach (var binding in objectBindings)
+            if (oldObjectBindings.Count > 0)
             {
-                if (!NeedsBindingRewrite(state, binding) && !ObjectCurveNeedsRewrite(state, clip, binding))
-                    continue;
-                var newBinding = MapBinding(state, binding);
-                var keyframes = AnimationUtility.GetObjectReferenceCurve(clip, binding);
-                if (keyframes != null)
-                {
-                    for (int i = 0; i < keyframes.Length; i++)
-                    {
-                        if (keyframes[i].value is Material m)
-                            keyframes[i].value = state.MapMaterial(m);
-                        else if (keyframes[i].value is Mesh mesh)
-                            keyframes[i].value = state.MapMesh(mesh);
-                        else if (keyframes[i].value is Texture2D tex)
-                            keyframes[i].value = state.MapTexture(tex);
-                        else if (keyframes[i].value is AudioClip audio)
-                            keyframes[i].value = state.MapAudio(audio);
-                    }
-                }
-                AnimationUtility.SetObjectReferenceCurve(newClip, binding, null);
-                AnimationUtility.SetObjectReferenceCurve(newClip, newBinding, keyframes);
+                AnimationUtility.SetObjectReferenceCurves(newClip,
+                    oldObjectBindings.ToArray(), new ObjectReferenceKeyframe[oldObjectBindings.Count][]);
+                AnimationUtility.SetObjectReferenceCurves(newClip,
+                    newObjectBindings.ToArray(), objectCurves.ToArray());
             }
 
 #if UNITY_2023_1_OR_NEWER
             // Rewrite discrete (int) curves — same remove/re-add pattern.
-            foreach (var binding in discreteBindings)
+            foreach (var rewrite in discreteRewrites)
             {
-                if (!NeedsBindingRewrite(state, binding)) continue;
-                var newBinding = MapBinding(state, binding);
-                AnimationUtility.SetDiscreteCurve(newClip, binding, null);
-                AnimationUtility.SetDiscreteCurve(newClip, newBinding,
-                    AnimationUtility.GetDiscreteCurve(clip, binding));
+                AnimationUtility.SetDiscreteCurve(newClip, rewrite.Old, null);
+                AnimationUtility.SetDiscreteCurve(newClip, rewrite.New,
+                    AnimationUtility.GetDiscreteCurve(clip, rewrite.Old));
             }
 #endif
 
             clipMap[clip] = newClip;
+            ctx.AssetSaver.SaveAsset(newClip);
+            ObjectRegistry.RegisterReplacedObject(clip, newClip);
 
             // If the clip has an additive reference pose clip that also needs
             // rewriting, clone and replace it recursively.
@@ -303,22 +309,30 @@ namespace HateRipper.AvatarObfuscator.Passes
             return false;
         }
 
-        private static bool ObjectCurveNeedsRewrite(ObfuscationContext state, AnimationClip clip, EditorCurveBinding binding)
+        private static bool RemapObjectCurveValues(ObfuscationContext state, ObjectReferenceKeyframe[] keys)
         {
-            var keys = AnimationUtility.GetObjectReferenceCurve(clip, binding);
             if (keys == null) return false;
-            foreach (var k in keys)
+            bool changed = false;
+            for (int i = 0; i < keys.Length; i++)
             {
-                if (k.value is Material m && state.MaterialReplacements.ContainsKey(m))
-                    return true;
-                if (k.value is Mesh mesh && state.MeshReplacements.ContainsKey(mesh))
-                    return true;
-                if (k.value is Texture2D tex && state.TextureReplacements.ContainsKey(tex))
-                    return true;
-                if (k.value is AudioClip audio && state.AudioReplacements.ContainsKey(audio))
-                    return true;
+                var original = keys[i].value;
+                Object mapped = original;
+                if (original is Material m)
+                    mapped = state.MapMaterial(m);
+                else if (original is Mesh mesh)
+                    mapped = state.MapMesh(mesh);
+                else if (original is Texture2D tex)
+                    mapped = state.MapTexture(tex);
+                else if (original is AudioClip audio)
+                    mapped = state.MapAudio(audio);
+
+                if (!ReferenceEquals(original, mapped))
+                {
+                    keys[i].value = mapped;
+                    changed = true;
+                }
             }
-            return false;
+            return changed;
         }
 
         private static EditorCurveBinding MapBinding(ObfuscationContext state, EditorCurveBinding binding)
