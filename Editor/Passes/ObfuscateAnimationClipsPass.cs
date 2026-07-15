@@ -280,11 +280,11 @@ namespace HateRipper.AvatarObfuscator.Passes
             // renames a parameter, any clip that drives it via an Animator curve
             // must also have that curve's propertyName updated, otherwise the clip
             // writes to the old name while the controller/BlendTree read the new one.
-            if (binding.type == typeof(Animator)
-                && !string.IsNullOrEmpty(binding.propertyName)
-                && state.ParameterRenames.TryGetValue(binding.propertyName, out var renamedParam)
-                && renamedParam != binding.propertyName)
-                return true;
+            if (binding.type == typeof(Animator) && !string.IsNullOrEmpty(binding.propertyName))
+            {
+                var renamedParam = state.MapAnimatorBindingParameter(binding.propertyName);
+                if (renamedParam != binding.propertyName) return true;
+            }
 
             // B2 fix: null paths must not be coerced to "" — they are internal Unity
             // placeholders and rewriting them would break the curve.
@@ -349,7 +349,7 @@ namespace HateRipper.AvatarObfuscator.Passes
             // controller's parameter list, so MapParameter handles them uniformly.
             if (binding.type == typeof(Animator) && !string.IsNullOrEmpty(prop))
             {
-                prop = state.MapParameter(prop);
+                prop = state.MapAnimatorBindingParameter(prop);
             }
             else if (!string.IsNullOrEmpty(prop) && prop.StartsWith(BlendShapePropertyPrefix))
             {

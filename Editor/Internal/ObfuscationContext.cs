@@ -26,6 +26,14 @@ namespace HateRipper.AvatarObfuscator.Internal
         /// <summary>oldParameterName -> newParameterName, for the union of names across every animator and the VRC parameter list.</summary>
         public readonly Dictionary<string, string> ParameterRenames = new Dictionary<string, string>();
 
+        // AnimationClip bindings recovered from a built avatar may use a generated
+        // placeholder whose Animator.StringToHash value matches the original
+        // parameter, even though the strings themselves differ. Keep a runtime-ID
+        // lookup for that specific case. Ambiguous hashes are deliberately excluded.
+        private readonly Dictionary<int, string> _parameterRenamesByHash = new Dictionary<int, string>();
+        private readonly HashSet<int> _ambiguousParameterHashes = new HashSet<int>();
+        private int _parameterHashLookupSourceCount = -1;
+
         /// <summary>oldPhysBonePrefix -> newPhysBonePrefix. PhysBones expand the prefix into <c>_IsGrabbed</c> etc; we rewrite the suffixed forms in animators using this map.</summary>
         public readonly Dictionary<string, string> PhysBonePrefixRenames = new Dictionary<string, string>();
 
@@ -123,6 +131,55 @@ namespace HateRipper.AvatarObfuscator.Internal
             if (string.IsNullOrEmpty(original)) return original;
             if (ParameterRenames.TryGetValue(original, out var renamed)) return renamed;
             return original;
+        }
+
+        /// <summary>
+        /// Maps an Animator parameter curve binding. Exact names take precedence;
+        /// when no exact name exists, a unique Animator runtime-hash match is used.
+        /// This supports AssetRipper-style <c>typetree_0x...</c> placeholder names
+        /// without applying hash-based matching to ordinary controller references.
+        /// </summary>
+        public string MapAnimatorBindingParameter(string original)
+        {
+            if (string.IsNullOrEmpty(original)) return original;
+            if (ParameterRenames.TryGetValue(original, out var renamed)) return renamed;
+
+            EnsureParameterHashLookup();
+            var hash = Animator.StringToHash(original);
+            if (_ambiguousParameterHashes.Contains(hash)) return original;
+            return _parameterRenamesByHash.TryGetValue(hash, out renamed) ? renamed : original;
+        }
+
+        private void EnsureParameterHashLookup()
+        {
+            // ParameterRenames is populated before the animation pass starts. The
+            // count check also keeps this helper safe if it is called earlier while
+            // the parameter pass is still adding entries.
+            if (_parameterHashLookupSourceCount == ParameterRenames.Count) return;
+
+            _parameterRenamesByHash.Clear();
+            _ambiguousParameterHashes.Clear();
+
+            foreach (var rename in ParameterRenames)
+            {
+                var hash = Animator.StringToHash(rename.Key);
+                if (_ambiguousParameterHashes.Contains(hash)) continue;
+
+                if (_parameterRenamesByHash.TryGetValue(hash, out var existing)
+                    && existing != rename.Value)
+                {
+                    // Two distinct old parameters share one runtime ID. An alias
+                    // binding cannot tell them apart, so only exact-name mapping is
+                    // safe for this hash.
+                    _parameterRenamesByHash.Remove(hash);
+                    _ambiguousParameterHashes.Add(hash);
+                    continue;
+                }
+
+                _parameterRenamesByHash[hash] = rename.Value;
+            }
+
+            _parameterHashLookupSourceCount = ParameterRenames.Count;
         }
 
         public Material MapMaterial(Material original)
