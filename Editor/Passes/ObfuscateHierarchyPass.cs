@@ -84,13 +84,24 @@ namespace HateRipper.AvatarObfuscator.Passes
             {
                 if (animator.avatar == null || !animator.avatar.isHuman) continue;
 
+                var unresolvedBones = new List<HumanBodyBones>();
                 for (var bone = HumanBodyBones.Hips; bone < HumanBodyBones.LastBone; bone++)
                 {
-                    Transform t;
+                    Transform t = null;
                     try { t = animator.GetBoneTransform(bone); }
-                    catch { continue; } // sub-animators with non-humanoid sub-rigs throw
+                    catch
+                    {
+                        // Fall through to the HumanDescription fallback below.
+                        // Some build-time Animator instances temporarily fail to
+                        // resolve bones that are still mapped by the Avatar.
+                    }
+
                     if (t != null) humanoidBones.Add(t);
+                    else unresolvedBones.Add(bone);
                 }
+
+                if (unresolvedBones.Count > 0)
+                    AddHumanDescriptionFallback(animator, unresolvedBones, humanoidBones);
             }
             foreach (var bone in humanoidBones)
             {
@@ -126,6 +137,84 @@ namespace HateRipper.AvatarObfuscator.Passes
             }
 
             return preserved;
+        }
+
+        /// <summary>
+        /// Recovers Humanoid bones which are present in the Avatar's source
+        /// mapping but which <see cref="Animator.GetBoneTransform"/> could not
+        /// resolve on the current build-time clone.
+        /// </summary>
+        private static void AddHumanDescriptionFallback(
+            Animator animator,
+            List<HumanBodyBones> unresolvedBones,
+            List<Transform> humanoidBones)
+        {
+            var human = animator.avatar.humanDescription.human;
+            if (human == null || human.Length == 0) return;
+
+            Transform[] candidates = null;
+
+            foreach (var unresolvedBone in unresolvedBones)
+            {
+                string mappedBoneName = null;
+                foreach (var mapping in human)
+                {
+                    if (string.IsNullOrEmpty(mapping.humanName) ||
+                        string.IsNullOrEmpty(mapping.boneName))
+                        continue;
+
+                    // HumanDescription uses names such as
+                    // "Left Index Proximal"; the enum uses LeftIndexProximal.
+                    if (NormalizeHumanBoneName(mapping.humanName) != unresolvedBone.ToString())
+                        continue;
+
+                    mappedBoneName = mapping.boneName;
+                    break;
+                }
+
+                // No HumanDescription entry means this Humanoid slot is
+                // genuinely unmapped, rather than temporarily unresolved.
+                if (mappedBoneName == null) continue;
+
+                if (candidates == null)
+                    candidates = animator.transform.GetComponentsInChildren<Transform>(true);
+
+                var matchCount = 0;
+                foreach (var candidate in candidates)
+                {
+                    // Keep the rig bone-name comparison exact and
+                    // case-sensitive, and never search outside this Animator.
+                    if (candidate.name != mappedBoneName) continue;
+                    humanoidBones.Add(candidate);
+                    matchCount++;
+                }
+
+                if (matchCount == 0)
+                {
+                    Debug.LogWarning(
+                        $"Avatar Obfuscator: Humanoid bone '{unresolvedBone}' maps to " +
+                        $"'{mappedBoneName}', but no matching Transform exists under " +
+                        $"Animator '{animator.name}'.",
+                        animator);
+                    continue;
+                }
+
+                // With no public full-path data available on HumanDescription,
+                // preserving all exact-name matches is safer than guessing.
+                if (matchCount > 1)
+                {
+                    Debug.LogWarning(
+                        $"Avatar Obfuscator: found {matchCount} Transforms named " +
+                        $"'{mappedBoneName}' while recovering Humanoid bone " +
+                        $"'{unresolvedBone}'. All candidates will be preserved.",
+                        animator);
+                }
+            }
+        }
+
+        private static string NormalizeHumanBoneName(string humanName)
+        {
+            return humanName.Replace(" ", string.Empty);
         }
 
         private static Transform FindChild(Transform parent, string name)
