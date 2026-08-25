@@ -2,6 +2,15 @@
 
 All notable changes to this package will be documented in this file.
 
+## [0.4.9] - 2026-08-25
+
+### Fixed
+
+- 修复了少数 Avatar 在 NDMF 构建后 Humanoid 手指映射失效，导致 Gesture Controller 状态与动画片段均正常、但 `GestureLeft` / `GestureRight` 无法驱动手部姿态的问题。当 `Animator.GetBoneTransform()` 无法解析仍记录在 `HumanDescription` 中的骨骼时，层级混淆现在会通过 `human[].boneName` 查找对应 Transform，并保护该骨骼及其祖先不被重命名。
+- 这个问题及上述 fallback 修复方案均由 Kuroj-lb 提出；我按照他提出的方法完成了实现。
+- 由于目前缺少可用于复现的实际 Bug 工程，我无法进行完整的端到端验证，也不能保证所有相似场景均已完全修复；但从代码路径审查与 Unity 编译结果来看，已知故障链已经修复。
+- 该问题只会在构建期间部分 Humanoid 骨骼无法通过 `GetBoneTransform()` 解析的特定情况下出现，因此修复前也不会影响大多数角色。
+
 ## [0.4.8] - 2026-07-17
 根据报告，我们的混淆器在一些含 AssetRipper 导出内容的工程文件上仍然会失效。
 在进一步对AssetRipper软件的研究后，我认识到Unity把AnimationClip打进AssetBundle后，很多动画绑定不会再存完整字符串，而是只存 32 位哈希——Transform 层级路径存成 path hash，组件属性或 Animator 参数存成 attribute/property hash，运行时全靠这些哈希来定位对象和属性。
